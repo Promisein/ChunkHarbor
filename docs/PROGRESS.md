@@ -22,6 +22,7 @@
 ## 本轮测试证据
 
 - 2026-10-30 M1 审计：源码包含 `EventLoop`、`EpollPoller`、`Channel` 及其单元测试；缺少 `Buffer`、`TcpConnection`、`TcpServer`、跨平台 `FrameCodec`、Echo/握手模式及 100 连接功能测试，**M1 未完成**。本轮虚拟机 SSH 连接超时，未重新运行 Ubuntu 构建和 CTest；上次 4/4 结果只代表当时的源码。GitHub CI 配置用于后续独立验证 Linux 构建。
+- GitHub [Linux CI #1](https://github.com/Promisein/ChunkHarbor/actions/runs/40912229775) 对首次提交 `7bca78c` 显示 Success；该工作流执行 Ubuntu 22.04 上的 CMake 配置、构建和 CTest。公开页面未显示逐项测试日志，不能从页面确认单测数量。
 - 2026-10-30 文档核对：Windows 目录中的 `AGENTS.md` 和 `CODEX_DEVELOPMENT_GUIDE.md` 已更新为 M0–M7、Windows Qt GUI 路线；本轮仅修改文档，未重新构建或执行测试。SSH 到 `miniob-ubuntu` 两次连接超时，虚拟机副本尚未同步。
 
 - `cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug`：通过（Ubuntu 22.04，GCC 11.4.0，CMake 3.22.1）。
