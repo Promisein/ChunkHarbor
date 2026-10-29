@@ -1,0 +1,6 @@
+/build/
+/build-*/
+/cmake-build-debug/
+/.idea/
+/.local-data/
+*.swp
