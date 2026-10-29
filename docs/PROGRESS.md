@@ -21,7 +21,8 @@
 
 ## 本轮测试证据
 
-- 2026-10-30 M1 审计：源码包含 `EventLoop`、`EpollPoller`、`Channel` 及其单元测试；缺少 `Buffer`、`TcpConnection`、`TcpServer`、跨平台 `FrameCodec`、Echo/握手模式及 100 连接功能测试，**M1 未完成**。本轮虚拟机 SSH 连接超时，未重新运行 Ubuntu 构建和 CTest；上次 4/4 结果只代表当时的源码。GitHub CI 配置用于后续独立验证 Linux 构建。
+- 2026-10-30 虚拟机网络恢复：从 GitHub `main` 克隆提交 `f333551` 到独立目录 `/home/ning/ChunkHarbor-verify-20261030`；在 Ubuntu 22.04 上执行 `cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug`、`cmake --build build -j 2`、`ctest --test-dir build --output-on-failure`，配置与构建通过，CTest **4/4 通过**；服务端/CLI 的 `--help` 均正常退出。原 `/home/ning/ChunkHarbor` 含未跟踪文件，本轮未覆盖。
+- 2026-10-30 M1 审计：源码包含 `EventLoop`、`EpollPoller`、`Channel` 及其单元测试；缺少 `Buffer`、`TcpConnection`、`TcpServer`、跨平台 `FrameCodec`、Echo/握手模式及 100 连接功能测试，**M1 未完成**。审计当时虚拟机 SSH 连接超时，未重新运行 Ubuntu 构建和 CTest；该限制已由本轮独立克隆验证解决。
 - GitHub [Linux CI #1](https://github.com/Promisein/ChunkHarbor/actions/runs/40912229775) 对首次提交 `7bca78c` 显示 Success；该工作流执行 Ubuntu 22.04 上的 CMake 配置、构建和 CTest。公开页面未显示逐项测试日志，不能从页面确认单测数量。
 - 2026-10-30 文档核对：Windows 目录中的 `AGENTS.md` 和 `CODEX_DEVELOPMENT_GUIDE.md` 已更新为 M0–M7、Windows Qt GUI 路线；本轮仅修改文档，未重新构建或执行测试。SSH 到 `miniob-ubuntu` 两次连接超时，虚拟机副本尚未同步。
 
