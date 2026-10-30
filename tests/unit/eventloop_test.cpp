@@ -17,6 +17,7 @@ int main() {
     chunkharbor::EventLoop loop;
     chunkharbor::Channel channel(loop, reader.get());
     std::atomic<int> tasks{0};
+    std::atomic<bool> writeOk{false};
     int reads = 0;
     channel.setReadCallback([&] {
         char value = 0;
@@ -29,11 +30,11 @@ int main() {
     std::thread producer([&] {
         loop.queueInLoop([&] { ++tasks; });
         const char value = 'x';
-        ::write(writer.get(), &value, 1);
+        writeOk = ::write(writer.get(), &value, 1) == 1;
     });
     loop.run();
     producer.join();
-    if (reads != 1 || tasks != 1) return 2;
+    if (reads != 1 || tasks != 1 || !writeOk) return 2;
 
     // A removed channel must not be dispatched when the FD becomes readable again.
     const char value = 'x';

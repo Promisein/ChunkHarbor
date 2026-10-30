@@ -9,9 +9,10 @@
 
 namespace chunkharbor {
 
-EventLoop::EventLoop()
-    : owner_(std::this_thread::get_id()),
+EventLoop::EventLoop(std::size_t maxPendingTasks)
+    : owner_(std::this_thread::get_id()), maxPendingTasks_(maxPendingTasks),
       wakeFd_(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) {
+    if (maxPendingTasks == 0) throw std::invalid_argument("pending task limit is zero");
     if (!wakeFd_) throw systemError(errno, "eventfd");
     wakeChannel_ = std::make_unique<Channel>(*this, wakeFd_.get());
     wakeChannel_->setReadCallback([this] { drainWakeFd(); });
@@ -32,13 +33,19 @@ void EventLoop::removeChannel(Channel& channel) { assertInLoopThread(); poller_.
 
 void EventLoop::wake() noexcept {
     const std::uint64_t one = 1;
-    const auto result = ::write(wakeFd_.get(), &one, sizeof(one));
+    ssize_t result;
+    do { result = ::write(wakeFd_.get(), &one, sizeof(one)); } while (result < 0 && errno == EINTR);
     (void)result; // EAGAIN means an existing wakeup is already pending.
 }
 
 void EventLoop::drainWakeFd() {
     std::uint64_t count;
-    while (::read(wakeFd_.get(), &count, sizeof(count)) == sizeof(count)) {}
+    for (;;) {
+        const auto result = ::read(wakeFd_.get(), &count, sizeof(count));
+        if (result == sizeof(count) || (result < 0 && errno == EINTR)) continue;
+        if (result < 0 && errno == EAGAIN) break;
+        throw systemError(errno, "eventfd read");
+    }
 }
 
 void EventLoop::runPending() {
@@ -51,7 +58,6 @@ void EventLoop::run() {
     assertInLoopThread();
     if (running_) throw std::logic_error("EventLoop already running");
     running_ = true;
-    quit_.store(false);
     try {
         runPending();
         while (!quit_.load()) {
@@ -62,6 +68,7 @@ void EventLoop::run() {
         }
     } catch (...) { running_ = false; throw; }
     running_ = false;
+    quit_.store(false);
 }
 
 void EventLoop::quit() noexcept { quit_.store(true); wake(); }
@@ -71,7 +78,11 @@ void EventLoop::runInLoop(std::function<void()> task) {
 }
 
 void EventLoop::queueInLoop(std::function<void()> task) {
-    { std::lock_guard<std::mutex> lock(pendingMutex_); pending_.push_back(std::move(task)); }
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex_);
+        if (pending_.size() >= maxPendingTasks_) throw std::length_error("EventLoop pending queue full");
+        pending_.push_back(std::move(task));
+    }
     wake();
 }
 

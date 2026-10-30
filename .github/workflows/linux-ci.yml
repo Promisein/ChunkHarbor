@@ -7,11 +7,27 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        sanitizers: ['OFF', 'ON']
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_SANITIZERS=${{ matrix.sanitizers }}
       - name: Build
         run: cmake --build build -j 2
       - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
         run: ctest --test-dir build --output-on-failure
+  windows-protocol:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure portable targets
+        run: cmake -S . -B build -DCHUNKHARBOR_BUILD_SERVER=OFF -DCHUNKHARBOR_BUILD_CLI=OFF -DCHUNKHARBOR_BUILD_GUI=OFF
+      - name: Build
+        run: cmake --build build --config Debug
+      - name: Test golden vectors
+        run: ctest --test-dir build -C Debug --output-on-failure

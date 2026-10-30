@@ -4,6 +4,7 @@
 
 #include <cerrno>
 #include <stdexcept>
+#include <iostream>
 #include <sys/epoll.h>
 
 namespace chunkharbor {
@@ -37,8 +38,10 @@ void EpollPoller::remove(Channel& channel) {
     if (found == tokensByFd_.end()) return;
     if (entries_.at(found->second).channel != &channel)
         throw std::logic_error("channel does not own FD registration");
-    if (::epoll_ctl(epollFd_.get(), EPOLL_CTL_DEL, channel.fd(), nullptr) < 0 && errno != ENOENT)
-        throw systemError(errno, "epoll_ctl delete");
+    // Even a failed kernel removal must not leave a pointer to a dying Channel.
+    if (::epoll_ctl(epollFd_.get(), EPOLL_CTL_DEL, channel.fd(), nullptr) < 0 &&
+        errno != ENOENT && errno != EBADF)
+        std::cerr << "epoll_ctl delete failed: " << errno << '\n';
     entries_.erase(found->second);
     tokensByFd_.erase(found);
     channel.registered_ = false;

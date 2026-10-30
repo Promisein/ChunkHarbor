@@ -16,7 +16,7 @@ class Channel;
 
 class EventLoop {
 public:
-    EventLoop();
+    explicit EventLoop(std::size_t maxPendingTasks = 4096);
     ~EventLoop();
     EventLoop(const EventLoop&) = delete;
     EventLoop& operator=(const EventLoop&) = delete;
@@ -36,6 +36,7 @@ private:
     void runPending();
 
     const std::thread::id owner_;
+    const std::size_t maxPendingTasks_;
     EpollPoller poller_;
     UniqueFd wakeFd_;
     std::unique_ptr<Channel> wakeChannel_;

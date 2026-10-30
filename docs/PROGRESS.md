@@ -1,42 +1,42 @@
 # ChunkHarbor 开发进度
 
-- 当前阶段：M1（第一子任务完成，阶段未全部完成）
+- 当前阶段：M1 已完成（单线程 LT 网络与帧协议验收）；M2 尚未开始。
 - 最近更新：2026-10-30
+- 本轮范围：用户明确授权完成整个 M1，并同步虚拟机与 GitHub。
 
 ## 已完成
 
-- [x] CMake C++17 基础工程、核心库 target、服务端与客户端 `--help`。
-- [x] `UniqueFd`、基础错误对象和同步日志接口。
-- [x] CTest 基础测试、配置样例、格式配置与基础文档。
-- [x] M1：单线程 LT EventLoop、Channel、EpollPoller、eventfd 跨线程唤醒与基础事件测试。
+- [x] M0：CMake、基础 RAII/日志、Linux server/CLI 入口。
+- [x] 现有 Buffer：受限容量、整理/扩容、二进制流、5000次参考模型操作。
+- [x] 单线程 LT EventLoop、EpollPoller、Channel，eventfd 跨线程唤醒；EINTR 重试、quit-before-run、有界 pending 队列（默认4096项）。
+- [x] Channel weak owner 绑定和整个派发期间的强引用，回调移除后停止后续派发；生命周期回归测试。
+- [x] TcpConnection：非阻塞读写、部分发送、EAGAIN/EINTR、按需 EPOLLOUT、有界输入/输出、读暂停恢复、半关闭排空。
+- [x] TcpServer：loopback accept、连接上限、timerfd 空闲回收、资源不足暂停 accept、stop立即释放监听端口。
+- [x] 纯 C++17 FrameCodec：32字节大端头、逐帧增量解析、长度/版本/类型/标志检查；Ubuntu与Windows相同golden vector。
+- [x] 分离 protocol/client_core/linux_net targets，平台选项，Windows不编译Linux源码。
+- [x] 可运行 Echo 服务端和非阻塞 Linux CLI；signalfd 受控停止。
+- [x] 网络集成：100个同时连接、半包/粘包、1MiB帧、非法帧、EOF/RST、快速连断、慢读、FD恢复、空闲/数量上限、CLI超时。
+- [x] 独立代码审查；修复停止后仍占端口的建议并自动化CLI沉默/截断响应超时场景。
 
-## 正在进行
+## 本轮真实验证
 
-- [ ] M1 后续：Buffer、TcpConnection、FrameCodec 与 TCP 网络集成测试。
-- [ ] 按新版 Windows Qt + Linux Reactor 指南逐步建立平台 target 边界；当前 `chunkharbor_core` 仍混合 Linux `net`，没有可移植协议库。
+平台：Ubuntu 22.04，GCC 11.4，CMake 3.22.1，Python 3.10.12；正式目录 `/home/ning/ChunkHarbor`。
 
-## 下一步
+- Debug：`cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug`；`cmake --build build -j 2`；`ctest --test-dir build --output-on-failure`：**11/11通过**。
+- ASan/UBSan：`cmake -S . -B build-asan -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_SANITIZERS=ON`；构建后设置 `ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1` 运行CTest：**11/11通过**。
+- Release：`cmake -S . -B build-release -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release`，构建与CTest：**11/11通过**。
+- Windows MinGW 13.2 / Ninja：禁用 server/CLI/GUI，构建 protocol/client_core 与协议测试：**1/1通过**。精确命令与验收对应见 `docs/M1_VALIDATION.md`。
+- 原有 Buffer 的5项测试及之前事件循环的4项测试，是早期历史结果；当前以11项为准。
 
-- [ ] M1：实现独立 Buffer，覆盖追加、消费、边界与容量限制测试。
+## 未验证与边界
 
-## 本轮测试证据
+- 未做性能基准、TSan、Qt GUI联调、TLS/认证或文件备份测试；不宣称吞吐量提升。
+- 单loop是本轮完成的M1基线；多线程Reactor为后续扩展，不以100连接功能测试推断性能。
+- M1 Echo将PING与DATA_CHUNK的正文当作不透明测试字节；尚无JSON业务解析、上传确认、文件写入、SHA-256、SQLite或重启恢复。
+- 服务端只监听127.0.0.1。每连接输入上限1MiB+32，输出4MiB；这些限制不含内核缓冲、短暂副本和allocator开销。
+- 所有连接注册/操作/最终销毁归属loop线程；跨线程投递调用方须保证EventLoop仍存活，队列满抛length_error。
+- 旧验证目录 `/home/ning/ChunkHarbor-verify-20261030` 不作正式开发目录；原目录备份仍保留。
 
-- 2026-10-30 虚拟机网络恢复：从 GitHub `main` 克隆提交 `f333551` 到独立目录 `/home/ning/ChunkHarbor-verify-20261030`；在 Ubuntu 22.04 上执行 `cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug`、`cmake --build build -j 2`、`ctest --test-dir build --output-on-failure`，配置与构建通过，CTest **4/4 通过**；服务端/CLI 的 `--help` 均正常退出。原 `/home/ning/ChunkHarbor` 含未跟踪文件，本轮未覆盖。
-- 2026-10-30 M1 审计：源码包含 `EventLoop`、`EpollPoller`、`Channel` 及其单元测试；缺少 `Buffer`、`TcpConnection`、`TcpServer`、跨平台 `FrameCodec`、Echo/握手模式及 100 连接功能测试，**M1 未完成**。审计当时虚拟机 SSH 连接超时，未重新运行 Ubuntu 构建和 CTest；该限制已由本轮独立克隆验证解决。
-- GitHub [Linux CI #1](https://github.com/Promisein/ChunkHarbor/actions/runs/40912229775) 对首次提交 `7bca78c` 显示 Success；该工作流执行 Ubuntu 22.04 上的 CMake 配置、构建和 CTest。公开页面未显示逐项测试日志，不能从页面确认单测数量。
-- 2026-10-30 文档核对：Windows 目录中的 `AGENTS.md` 和 `CODEX_DEVELOPMENT_GUIDE.md` 已更新为 M0–M7、Windows Qt GUI 路线；本轮仅修改文档，未重新构建或执行测试。SSH 到 `miniob-ubuntu` 两次连接超时，虚拟机副本尚未同步。
+## 下一步（仅一项）
 
-- `cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug`：通过（Ubuntu 22.04，GCC 11.4.0，CMake 3.22.1）。
-- `cmake --build build -j 2`：通过。
-- `ctest --test-dir build --output-on-failure`：3/3 通过（common_test、server_help、cli_help）。
-- `./build/chunkharbor-server --help`、`./build/chunkharbor-cli --help`：均退出成功并显示尚未实现的功能。
-- 本轮 `cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug`、`cmake --build build -j 2`：通过。
-- 本轮 `ctest --test-dir build --output-on-failure`：4/4 通过，新增 `eventloop_test` 覆盖管道可读事件、跨线程任务投递、移除监听与退出。
-
-## 已知问题与设计决策
-
-- 当前无网络监听、配置解析、文件传输或数据库功能；示例配置仅作后续阶段约定。
-- Ubuntu 虚拟机未安装 Ninja，本轮使用 Unix Makefiles 生成器。
-- 尚未进行网络集成测试、故障恢复测试或性能测试，因为对应模块尚未实现。
-- M1 尚未实现 TCP 服务、客户端连接或帧解析；事件循环仅可通过测试程序验证。Channel 回调期间由 FD 所有者保证其生命周期。
-- 新版指南的 M0 跨平台 target 选项和纯 C++17 协议库尚未实现；README 保留当前真实可用的 Linux 构建命令。Windows Qt GUI 尚无源码或验证结果。
+- [ ] M2：实现并测试 HELLO/HELLO_ACK 控制字段的严格编解码和能力协商，保持与Echo测试模式分离。
