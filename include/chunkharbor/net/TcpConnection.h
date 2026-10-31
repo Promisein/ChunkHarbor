@@ -23,12 +23,16 @@ public:
     TcpConnection(EventLoop& loop, UniqueFd fd, Limits limits);
     void start();
     void send(std::string_view bytes);
+    void pauseReading();
+    void resumeReading();
+    // Stop receiving and close after already queued output has drained (loop thread).
+    void shutdownAfterWrite();
     void close();
     void setMessageCallback(MessageCallback cb) { messageCallback_ = std::move(cb); }
     void setCloseCallback(CloseCallback cb) { closeCallback_ = std::move(cb); }
     int fd() const noexcept { return fd_.get(); }
     bool closed() const noexcept { return closed_; }
-    bool readPaused() const noexcept { return readPaused_; }
+    bool readPaused() const noexcept { return readPaused_ || applicationPaused_; }
     const Stats& stats() const noexcept { return stats_; }
     std::chrono::steady_clock::time_point lastActivity() const noexcept { return lastActivity_; }
 private:
@@ -40,7 +44,7 @@ private:
     Channel channel_;
     Limits limits_;
     Buffer input_, output_;
-    bool closed_ = false, started_ = false, readEof_ = false, readPaused_ = false;
+    bool closed_ = false, started_ = false, readEof_ = false, readPaused_ = false, applicationPaused_ = false;
     Stats stats_;
     MessageCallback messageCallback_;
     CloseCallback closeCallback_;

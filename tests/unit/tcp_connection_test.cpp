@@ -52,5 +52,25 @@ int main() {
     UniqueFd other(more[1]);
     auto bounded = std::make_shared<TcpConnection>(loop, UniqueFd(more[0]), limits);
     bounded->start(); bounded->send(std::string(limits.outputLimit + 1, 'z'));
-    return bounded->closed() ? 0 : 5;
+    if (!bounded->closed()) return 5;
+    int draining[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, draining)) return 6;
+    ::setsockopt(draining[0], SOL_SOCKET, SO_SNDBUF, &small, sizeof(small));
+    auto graceful = std::make_shared<TcpConnection>(loop, UniqueFd(draining[0]), limits);
+    graceful->setCloseCallback([&](const auto&) { loop.quit(); });
+    graceful->start(); graceful->send(bulk); graceful->shutdownAfterWrite();
+    std::string drained;
+    std::thread receiver([&] {
+        char data[8192];
+        for (;;) {
+            const auto n = ::read(draining[1], data, sizeof(data));
+            if (n > 0) drained.append(data, n);
+            else if (n == 0) break;
+            else if (errno == EAGAIN || errno == EINTR) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            else break;
+        }
+        ::close(draining[1]);
+    });
+    loop.run(); receiver.join();
+    return drained == bulk && graceful->closed() ? 0 : 7;
 }

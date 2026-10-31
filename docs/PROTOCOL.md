@@ -1,6 +1,18 @@
-# M1 帧协议
+# M1/M2 帧与上传协议
 
 当前实现为 `chunkharbor_protocol`，API 在 `protocol/FrameCodec.h`；不含 Linux/Qt 依赖。
+
+M2首个子任务新增严格HELLO/HELLO_ACK与握手ERROR，运行于独立 `--handshake` 模式。字段、整数/字符串/数组限制、请求关联及状态机见 [HANDSHAKE.md](HANDSHAKE.md)；M1 Echo语义保持独立。
+
+M2 DATA_CHUNK已接入UploadStorage实际摘要比对、受限写入和持久回执。60字节业务头的结构编解码仍独立，见 [DATA_CHUNK.md](DATA_CHUNK.md)。结构解码本身不读取磁盘。
+
+M2 BEGIN_UPLOAD已接入会话分配和安全暂存；字段/整数精度/路径语法见 [BEGIN_UPLOAD.md](BEGIN_UPLOAD.md)。原握手NUL尾缀问题已修复。
+
+M2 UPLOAD_PLAN返回新会话的全量块区间，不提供重启续传或增量。区间及512区间上限见 [UPLOAD_PLAN.md](UPLOAD_PLAN.md)；空计划不等于文件已提交。
+
+M2 CHUNK_ACK在数据和最小回执持久后发送，固定durable:true契约见 [CHUNK_ACK.md](CHUNK_ACK.md)。业务模式仅在客户端HELLO提出upload且服务端实际启用时协商upload能力，不能把独立握手模式视为支持上传。
+
+COMMIT_UPLOAD(type9)正文仅session_id；COMMIT_RESULT(type10)严格包含session_id、path、size、sha256、committed:true。上传ERROR(type15)仅code/message，支持UploadControl.h白名单。所有控制消息均拒绝重复/未知/缺失、错误类型、NUL尾缀及超限，整数不经double；上传请求ID非零且严格递增。真实流程、错误和发布窗口见 [M2_USAGE.md](M2_USAGE.md)。
 
 固定32字节显式大端序：magic:uint32(0x43484B48)、version:uint16(1)、type:uint16、flags:uint32(0)、request_id:uint64、payload_length:uint64、reserved:uint32(0)。类型1–23识别为已定义编号；识别编号不等于支持对应业务。
 

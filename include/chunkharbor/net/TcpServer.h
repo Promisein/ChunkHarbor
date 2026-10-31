@@ -11,6 +11,9 @@ public:
     ~TcpServer();
     std::uint16_t port() const noexcept { return port_; }
     void setMessageCallback(TcpConnection::MessageCallback cb) { messageCallback_ = std::move(cb); }
+    // Initialization only, on the loop thread before start: install callbacks here.
+    // Do not send, close or start the connection from this callback.
+    void setConnectionCallback(std::function<void(const TcpConnection::Ptr&)> cb) { connectionCallback_ = std::move(cb); }
     void stop();
 private:
     void acceptReady();
@@ -24,5 +27,6 @@ private:
     bool stopped_ = false, acceptPaused_ = false;
     std::unordered_map<int, TcpConnection::Ptr> connections_;
     TcpConnection::MessageCallback messageCallback_;
+    std::function<void(const TcpConnection::Ptr&)> connectionCallback_;
 };
 } // namespace chunkharbor

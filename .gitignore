@@ -4,3 +4,5 @@
 /.idea/
 /.local-data/
 *.swp
+__pycache__/
+*.pyc

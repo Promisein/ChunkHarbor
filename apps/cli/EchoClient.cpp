@@ -1,7 +1,9 @@
 #include "EchoClient.h"
 #include "chunkharbor/client_core/EchoExchange.h"
+#include "chunkharbor/client_core/HandshakeExchange.h"
 #include "chunkharbor/common/UniqueFd.h"
 #include <arpa/inet.h>
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <poll.h>
@@ -21,9 +23,9 @@ void waitFor(int fd, short events, Clock::time_point deadline) {
     }
 }
 }
-std::string runEcho(std::uint16_t port, std::string_view message) {
+static chunkharbor::protocol::Frame exchangeFrame(std::uint16_t port, std::string_view request,
+                                         std::size_t maxResponsePayload) {
     using namespace chunkharbor;
-    const auto request = client::echoRequest(message);
     UniqueFd socket(::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0));
     if (!socket) throw std::runtime_error("socket failed");
     sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(port);
@@ -49,15 +51,26 @@ std::string runEcho(std::uint16_t port, std::string_view message) {
     for (;;) {
         const auto decoded = protocol::decode(bytes);
         if (decoded.status == protocol::DecodeStatus::Error) throw std::runtime_error(decoded.error);
-        if (decoded.status == protocol::DecodeStatus::Complete) {
-            if (!client::isEchoResponse(decoded.frame, message)) throw std::runtime_error("echo mismatch");
-            return decoded.frame.payload;
-        }
+        if (decoded.status == protocol::DecodeStatus::Complete) return decoded.frame;
+        if (bytes.size() >= protocol::HeaderSize + maxResponsePayload)
+            throw std::runtime_error("response exceeds message limit");
         char buffer[8192];
-        const auto n = ::recv(socket.get(), buffer, sizeof(buffer), 0);
+        const auto available = std::min(sizeof(buffer), protocol::HeaderSize + maxResponsePayload - bytes.size());
+        const auto n = ::recv(socket.get(), buffer, available, 0);
         if (n > 0) bytes.append(buffer, n);
         else if (n < 0 && errno == EINTR) continue;
         else if (n < 0 && errno == EAGAIN) waitFor(socket.get(), POLLIN, deadline);
         else throw std::runtime_error("server closed before complete response");
     }
+}
+std::string runEcho(std::uint16_t port, std::string_view message) {
+    const auto response = exchangeFrame(port, chunkharbor::client::echoRequest(message), chunkharbor::protocol::MaxControlPayload);
+    if (!chunkharbor::client::isEchoResponse(response, message)) throw std::runtime_error("echo mismatch");
+    return response.payload;
+}
+chunkharbor::protocol::HelloAck runHandshake(std::uint16_t port, std::string_view clientName) {
+    chunkharbor::protocol::Hello offer; offer.clientName = clientName;
+    chunkharbor::client::HandshakeExchange handshake(std::move(offer));
+    handshake.accept(exchangeFrame(port, chunkharbor::protocol::encode(handshake.request()), chunkharbor::protocol::MaxHandshakePayload));
+    return handshake.ack();
 }

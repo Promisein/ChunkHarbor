@@ -47,6 +47,7 @@ void TcpServer::acceptReady() {
         if (connections_.size() >= maxConnections_) continue;
         auto connection = std::make_shared<TcpConnection>(loop_, std::move(accepted), TcpConnection::Limits{});
         connection->setMessageCallback(messageCallback_);
+        if (connectionCallback_) connectionCallback_(connection);
         connection->setCloseCallback([this](const auto& c) { connections_.erase(c->fd()); });
         connections_.emplace(fd, connection); connection->start();
     }

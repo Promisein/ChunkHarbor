@@ -26,7 +26,7 @@ void TcpConnection::refreshInterest() {
     if (closed_) return;
     if (output_.readableBytes() >= limits_.highWater) readPaused_ = true;
     else if (output_.readableBytes() <= limits_.lowWater) readPaused_ = false;
-    channel_.setInterest(!readEof_ && !readPaused_, output_.readableBytes() != 0);
+    channel_.setInterest(!readEof_ && !readPaused_ && !applicationPaused_, output_.readableBytes() != 0);
 }
 void TcpConnection::send(std::string_view bytes) {
     loop_.assertInLoopThread();
@@ -53,7 +53,7 @@ void TcpConnection::writeReady() {
 }
 void TcpConnection::readReady() {
     std::size_t budget = IoBudget;
-    while (!closed_ && !readEof_ && !readPaused_ && budget) {
+    while (!closed_ && !readEof_ && !readPaused_ && !applicationPaused_ && budget) {
         const auto space = std::min({std::size_t(64 * 1024), budget,
                                     limits_.inputLimit - input_.readableBytes()});
         if (!space) { close(); return; }
@@ -70,6 +70,26 @@ void TcpConnection::readReady() {
         else if (errno == EAGAIN || errno == EWOULDBLOCK) break;
         else { close(); return; }
     }
+}
+void TcpConnection::shutdownAfterWrite() {
+    loop_.assertInLoopThread();
+    if (closed_) return;
+    readEof_ = true;
+    if (!output_.readableBytes()) close(); else refreshInterest();
+}
+void TcpConnection::pauseReading() {
+    loop_.assertInLoopThread();
+    if (closed_) return;
+    applicationPaused_ = true; refreshInterest();
+}
+void TcpConnection::resumeReading() {
+    loop_.assertInLoopThread();
+    if (closed_) return;
+    applicationPaused_ = false; refreshInterest();
+    // Bytes already received before suspension have no fresh EPOLLIN edge
+    // requirement: replay them without waiting for another peer write.
+    if (!readPaused_ && !readEof_ && input_.readableBytes() && messageCallback_)
+        messageCallback_(shared_from_this(),input_);
 }
 void TcpConnection::close() {
     loop_.assertInLoopThread();

@@ -12,6 +12,8 @@ jobs:
         sanitizers: ['OFF', 'ON']
     steps:
       - uses: actions/checkout@v4
+      - name: Install OpenSSL development files
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
       - name: Configure
         run: cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_SANITIZERS=${{ matrix.sanitizers }}
       - name: Build
