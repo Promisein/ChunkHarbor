@@ -64,12 +64,13 @@ chunkharbor::TcpConnection::MessageCallback makeUploadHandler(chunkharbor::Uploa
                 }
                 if (request.type == 1)
                     throw MessageError("ALREADY_HANDSHAKEN", "HELLO is only allowed once");
-                if (!state->upload || (request.type != 3 && request.type != 5 && request.type != 9))
+                if (!state->upload || (request.type != 3 && request.type != 5 &&
+                                       request.type != 7 && request.type != 9))
                     throw MessageError("UNSUPPORTED_OPERATION",
                                        "Operation not negotiated or unsupported");
-                if (request.type == 3 && state->session)
+                if ((request.type == 3 || request.type == 7) && state->session)
                     throw MessageError("CONFLICT", "One file is allowed per connection");
-                if (request.type != 3 && !state->session)
+                if (request.type != 3 && request.type != 7 && request.type != 9 && !state->session)
                     throw MessageError("SESSION_NOT_FOUND", "No upload session");
                 const auto id = request.requestId;
                 const std::weak_ptr<TcpConnection> weakConnection = connection;
@@ -83,6 +84,19 @@ chunkharbor::TcpConnection::MessageCallback makeUploadHandler(chunkharbor::Uploa
                                 auto started = storage.begin(decodeBeginUpload(request.payload));
                                 return Reply{4, encodeUploadPlan(started.plan),
                                              std::move(started.session)};
+                            }
+                            if (request.type == 7) {
+                                auto found = storage.query(decodeQuerySession(request.payload));
+                                if (found.committed)
+                                    return Reply{10, encodeCommitResult(found.result), {}};
+                                return Reply{8, encodeSessionStatus(found.status),
+                                             std::move(found.session)};
+                            }
+                            if (request.type == 9 && !session) {
+                                auto found = storage.query(decodeCommitUpload(request.payload));
+                                if (!found.committed)
+                                    throw UploadFailure("SESSION_NOT_FOUND", "query active session before commit");
+                                return Reply{10, encodeCommitResult(found.result), {}};
                             }
                             if (request.type == 5)
                                 return Reply{6,

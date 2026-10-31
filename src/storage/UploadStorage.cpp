@@ -1,13 +1,16 @@
 #include "chunkharbor/storage/UploadStorage.h"
 #include "chunkharbor/common/Sha256.h"
 #include "chunkharbor/storage/TempFileStore.h"
+#include "chunkharbor/storage/SqliteStore.h"
 #include <algorithm>
+#include <chrono>
 #include <cerrno>
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits>
 #include <linux/openat2.h>
 #include <mutex>
+#include <map>
 #include <set>
 #include <sys/file.h>
 #include <sys/random.h>
@@ -96,6 +99,19 @@ std::string readMeta(int fd) {
     }
     return out;
 }
+std::string hashFd(int fd, std::uint64_t size) {
+    Sha256 hash;
+    char buffer[65536];
+    for (std::uint64_t offset = 0; offset < size;) {
+        auto n = ::pread(fd, buffer, std::min<std::uint64_t>(sizeof buffer, size - offset),
+                         static_cast<off_t>(offset));
+        if (n < 0 && errno == EINTR) continue;
+        io(n > 0);
+        hash.update(std::string_view(buffer, static_cast<std::size_t>(n)));
+        offset += static_cast<std::uint64_t>(n);
+    }
+    return toHex(hash.finish());
+}
 } // namespace
 struct UploadSession {
     std::mutex mutex;
@@ -107,12 +123,15 @@ struct UploadSession {
     std::vector<bool> accepted;
     std::vector<Sha256Digest> hashes;
     bool poisoned = false, committed = false;
+    std::string dbState = "CREATED";
     protocol::CommitResult result;
 };
 struct UploadStorage::Impl {
     TempFileStore temporary;
     UniqueFd root, lock, files, sessions;
     std::mutex mutex;
+    std::mutex dbMutex;
+    std::unique_ptr<SqliteStore> db;
     std::vector<UploadSessionPtr> retained;
     std::set<std::string> paths;
     std::uint64_t reserved = 0;
@@ -128,6 +147,21 @@ struct UploadStorage::Impl {
         files = directory(root.get(), "files");
         sessions = directory(root.get(), ".sessions");
         sync(root.get());
+        auto dbFile = regularFile(root.get(), "metadata.sqlite3", O_CREAT | O_RDWR, 0600);
+        dbFile.reset();
+        db = std::make_unique<SqliteStore>(std::string(path) + "/metadata.sqlite3",
+                                           CHUNKHARBOR_SCHEMA_V1_PATH);
+        auto quarantine = directory(root.get(), ".quarantine");
+        sync(root.get());
+        auto cleanupSession = [&](int dirfd, const std::string &name) {
+            for (const char *file : {"data", "meta.json", "receipts.log"})
+                if (::unlinkat(dirfd, file, 0) < 0) io(errno == ENOENT);
+            sync(dirfd);
+            io(::unlinkat(sessions.get(), name.c_str(), AT_REMOVEDIR) == 0);
+            sync(sessions.get());
+        };
+        std::map<std::string, SqliteStore::Transfer> known;
+        for (auto &t : db->transfers()) known.emplace(t.sessionId, std::move(t));
         auto scan = openSafe(sessions.get(), ".", O_RDONLY | O_DIRECTORY);
         DIR *listing = ::fdopendir(scan.get());
         io(listing != nullptr);
@@ -136,17 +170,24 @@ struct UploadStorage::Impl {
             errno = 0;
             while (auto *entry = ::readdir(listing)) {
                 std::string name(entry->d_name);
-                if (name == "." || name == "..")
-                    continue;
+                if (name == "." || name == "..") continue;
                 io(name.size() == 32 &&
                    name.find_first_not_of("0123456789abcdef") == std::string::npos);
+                auto it = known.find(name);
+                if (it == known.end()) {
+                    io(::syscall(SYS_renameat2, sessions.get(), name.c_str(),
+                                 quarantine.get(), name.c_str(), RENAME_NOREPLACE) == 0);
+                    sync(sessions.get());
+                    sync(quarantine.get());
+                    errno = 0;
+                    continue;
+                }
+                auto &t = it->second;
                 auto dir = openSafe(sessions.get(), name, O_RDONLY | O_DIRECTORY);
-                struct stat info{};
-                io(::fstat(dir.get(), &info) == 0 && info.st_uid == ::geteuid() &&
-                   (info.st_mode & 0077) == 0);
-                auto meta = regularFile(dir.get(), "meta.json", O_RDONLY);
-                auto data = regularFile(dir.get(), "data", O_RDONLY);
-                auto receipts = regularFile(dir.get(), "receipts.log", O_RDONLY);
+                struct stat directoryInfo{};
+                io(::fstat(dir.get(), &directoryInfo) == 0 &&
+                   directoryInfo.st_uid == ::geteuid() &&
+                   (directoryInfo.st_mode & 0077) == 0);
                 auto childScan = openSafe(dir.get(), ".", O_RDONLY | O_DIRECTORY);
                 DIR *children = ::fdopendir(childScan.get());
                 io(children != nullptr);
@@ -154,63 +195,131 @@ struct UploadStorage::Impl {
                 bool unexpected = false;
                 errno = 0;
                 while (auto *child = ::readdir(children)) {
-                    std::string file(child->d_name);
-                    if (file != "." && file != ".." && file != "data" && file != "meta.json" &&
-                        file != "receipts.log")
+                    const std::string file(child->d_name);
+                    if (file != "." && file != ".." && file != "data" &&
+                        file != "meta.json" && file != "receipts.log")
                         unexpected = true;
                 }
-                const bool scanOk = errno == 0;
+                const bool scanned = errno == 0;
                 ::closedir(children);
-                io(scanOk && !unexpected);
+                io(scanned && !unexpected);
+                auto meta = regularFile(dir.get(), "meta.json", O_RDONLY);
                 auto b = protocol::decodeBeginUpload(readMeta(meta.get()));
-                quotaGeometry(b);
-                io(::fstat(data.get(), &info) == 0 && info.st_size >= 0 &&
-                   static_cast<std::uint64_t>(info.st_size) <= b.size);
-                std::string pending;
-                char receiptBuffer[4096];
-                std::set<std::uint64_t> seen;
-                for (;;) {
-                    const auto n = ::read(receipts.get(), receiptBuffer, sizeof receiptBuffer);
-                    if (n < 0 && errno == EINTR)
-                        continue;
-                    io(n >= 0);
-                    if (!n)
-                        break;
-                    pending.append(receiptBuffer, static_cast<std::size_t>(n));
-                    for (;;) {
-                        const auto newline = pending.find('\n');
-                        if (newline == std::string::npos)
-                            break;
-                        io(newline <= 2048);
-                        const auto ack = protocol::decodeChunkAck(pending.substr(0, newline));
-                        std::string identity;
-                        const char *hex = "0123456789abcdef";
-                        for (auto byte : ack.sessionId) {
-                            identity += hex[byte >> 4];
-                            identity += hex[byte & 15];
-                        }
-                        io(identity == name && ack.offset < b.size &&
-                           ack.offset % b.chunkSize == 0 &&
-                           ack.dataLength ==
-                               std::min<std::uint64_t>(b.chunkSize, b.size - ack.offset) &&
-                           seen.insert(ack.offset).second);
-                        pending.erase(0, newline + 1);
-                    }
-                    io(pending.size() <= 2048);
+                io(b.path == t.logicalPath && b.sha256 == t.expectedSha256 &&
+                   b.size == static_cast<std::uint64_t>(t.totalSize) &&
+                   b.chunkSize == static_cast<std::uint32_t>(t.chunkSize) &&
+                   b.mtimeNs == t.mtimeNs && t.tempPath == ".sessions/" + name + "/data");
+                const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                constexpr std::int64_t retentionNs = 30LL * 24 * 60 * 60 * 1000000000;
+                if ((t.state == "CREATED" || t.state == "RECEIVING") &&
+                    t.updatedAtNs < now - retentionNs) {
+                    db->setState(name, t.state, "EXPIRED");
+                    t.state = "EXPIRED";
                 }
-                io(pending
-                       .empty()); // Torn or publication-state receipts require M3 reconciliation.
+                if (t.state == "FAILED") {
+                    io(::syscall(SYS_renameat2, sessions.get(), name.c_str(),
+                                 quarantine.get(), name.c_str(), RENAME_NOREPLACE) == 0);
+                    sync(sessions.get()); sync(quarantine.get());
+                    known.erase(it); errno = 0; continue;
+                }
+                if (t.state == "EXPIRED") {
+                    cleanupSession(dir.get(), name);
+                    known.erase(it); errno = 0; continue;
+                }
+                if (t.state == "COMMITTED") {
+                    auto destination = target(b.path);
+                    auto file = regularFile(destination.first.get(), destination.second, O_RDONLY);
+                    struct stat publishedInfo{};
+                    io(::fstat(file.get(), &publishedInfo) == 0 &&
+                       publishedInfo.st_size == static_cast<off_t>(b.size) &&
+                       hashFd(file.get(), b.size) == b.sha256);
+                    cleanupSession(dir.get(), name);
+                    known.erase(it); errno = 0; continue;
+                }
+                auto targetFile = target(b.path);
+                struct stat st{};
+                bool published = ::fstatat(targetFile.first.get(), targetFile.second.c_str(),
+                                           &st, AT_SYMLINK_NOFOLLOW) == 0;
+                if (published && t.state != "COMMITTING") fail("CONFLICT", "unpublished session target exists");
+                if (published) {
+                    auto final = regularFile(targetFile.first.get(), targetFile.second, O_RDONLY);
+                    io(st.st_size >= 0 && static_cast<std::uint64_t>(st.st_size) == b.size &&
+                       hashFd(final.get(), b.size) == b.sha256);
+                    sync(targetFile.first.get());
+                    db->setState(name, "COMMITTING", "COMMITTED");
+                    cleanupSession(dir.get(), name);
+                    known.erase(it); errno = 0; continue;
+                }
+                auto data = regularFile(dir.get(), "data", O_RDWR);
+                auto receipts = regularFile(dir.get(), "receipts.log", O_WRONLY | O_APPEND);
+                io(::fstat(data.get(), &st) == 0 && st.st_size >= 0 &&
+                   static_cast<std::uint64_t>(st.st_size) <= b.size);
+                auto session = std::make_shared<UploadSession>();
+                session->owner = this;
+                session->begin = b;
+                session->name = name;
+                session->dbState = t.state == "VERIFYING" ? "RECEIVING" : t.state;
+                for (std::size_t j = 0; j < 16; ++j) {
+                    auto digit = [](char c) -> std::uint8_t {
+                        return c <= '9' ? static_cast<std::uint8_t>(c - '0')
+                                        : static_cast<std::uint8_t>(c - 'a' + 10);
+                    };
+                    session->id[j] = static_cast<std::uint8_t>((digit(name[2*j]) << 4) | digit(name[2*j+1]));
+                }
+                session->accepted.resize(blocks(b));
+                session->hashes.resize(blocks(b));
+                for (const auto &chunk : db->chunks(name)) {
+                    io(chunk.index >= 0 && static_cast<std::uint64_t>(chunk.index) < blocks(b));
+                    const auto offset = static_cast<std::uint64_t>(chunk.index) * b.chunkSize;
+                    const auto length = std::min<std::uint64_t>(b.chunkSize, b.size - offset);
+                    std::string bytes(length, '\0');
+                    std::size_t done = 0;
+                    while (done < bytes.size()) {
+                        auto n = ::pread(data.get(), bytes.data() + done, bytes.size() - done,
+                                         static_cast<off_t>(offset + done));
+                        if (n < 0 && errno == EINTR) continue;
+                        if (n <= 0) break;
+                        done += static_cast<std::size_t>(n);
+                    }
+                    if (done != bytes.size() || toHex(sha256(bytes)) != chunk.sha256) {
+                        db->forgetChunk(name, chunk.index);
+                        continue;
+                    }
+                    session->accepted[chunk.index] = true;
+                    session->hashes[chunk.index] = sha256(bytes);
+                }
+                if (t.state == "VERIFYING") db->setState(name, "VERIFYING", "RECEIVING");
+                if (t.state == "COMMITTING" &&
+                    std::find(session->accepted.begin(), session->accepted.end(), false) !=
+                        session->accepted.end()) {
+                    db->setState(name, "COMMITTING", "RECEIVING");
+                    session->dbState = "RECEIVING";
+                }
+                session->dir = std::move(dir);
+                session->data = std::move(data);
+                session->receipts = std::move(receipts);
                 io(paths.insert(b.path).second);
-                reserved += b.size;
-                ++count;
+                reserved += b.size; ++count;
                 io(count <= 32 && reserved <= 512ULL * 1024 * 1024);
-                errno = 0;
+                retained.push_back(std::move(session));
+                known.erase(it); errno = 0;
             }
             io(errno == 0);
-        } catch (...) {
-            ::closedir(listing);
-            throw;
-        }
+            for (const auto &[name, transfer] : known) {
+                if (transfer.state == "COMMITTED") {
+                    io(transfer.totalSize >= 0);
+                    auto destination = target(transfer.logicalPath);
+                    auto file = regularFile(destination.first.get(), destination.second, O_RDONLY);
+                    struct stat info{};
+                    io(::fstat(file.get(), &info) == 0 && info.st_size == transfer.totalSize &&
+                       hashFd(file.get(), static_cast<std::uint64_t>(transfer.totalSize)) ==
+                           transfer.expectedSha256);
+                } else if (transfer.state != "FAILED" && transfer.state != "EXPIRED") {
+                    db->setState(name, transfer.state, "FAILED");
+                }
+            }
+        } catch (...) { ::closedir(listing); throw; }
         ::closedir(listing);
     }
     std::pair<UniqueFd, std::string> target(const std::string &path) {
@@ -229,6 +338,41 @@ struct UploadStorage::Impl {
 };
 UploadStorage::UploadStorage(std::string_view root) : impl_(std::make_unique<Impl>(root)) {}
 UploadStorage::~UploadStorage() = default;
+QueriedUpload UploadStorage::query(const protocol::QuerySession &request) {
+    auto &i = *impl_;
+    std::string name;
+    for (auto byte : request.sessionId) {
+        name += "0123456789abcdef"[byte >> 4];
+        name += "0123456789abcdef"[byte & 15];
+    }
+    UploadSessionPtr session;
+    {
+        std::lock_guard<std::mutex> guard(i.mutex);
+        for (const auto &item : i.retained)
+            if (item->name == name) { session = item; break; }
+    }
+    if (!session) {
+        std::lock_guard<std::mutex> guard(i.dbMutex);
+        for (const auto &t : i.db->transfers())
+            if (t.sessionId == name && t.state == "COMMITTED")
+                return {{}, {}, true,
+                        {request.sessionId, t.logicalPath,
+                         static_cast<std::uint64_t>(t.totalSize), t.expectedSha256}};
+        fail("SESSION_NOT_FOUND", "unknown or unavailable upload session");
+    }
+    std::lock_guard<std::mutex> guard(session->mutex);
+    if (session->poisoned) fail("SESSION_NOT_FOUND", "session requires recovery");
+    protocol::SessionStatus status;
+    status.sessionId = session->id;
+    status.chunkSize = session->begin.chunkSize;
+    status.blockCount = static_cast<std::uint32_t>(session->accepted.size());
+    status.missing.resize((session->accepted.size() + 7) / 8);
+    for (std::size_t index = 0; index < session->accepted.size(); ++index) {
+        if (!session->accepted[index])
+            status.missing[index / 8] |= static_cast<std::uint8_t>(1U << (index % 8));
+    }
+    return {session, std::move(status), false, {}};
+}
 StartedUpload UploadStorage::begin(const protocol::BeginUpload &b) {
     std::string json;
     try {
@@ -287,6 +431,12 @@ StartedUpload UploadStorage::begin(const protocol::BeginUpload &b) {
         sync(s->dir.get());
         sync(i.sessions.get());
         sync(i.root.get());
+        {
+            std::lock_guard<std::mutex> dbGuard(i.dbMutex);
+            i.db->createTransfer({s->name, b.path, b.sha256, "CREATED",
+                                  static_cast<std::int64_t>(b.size), b.chunkSize,
+                                  b.mtimeNs, 0, ".sessions/" + s->name + "/data"});
+        }
     } catch (...) {
         // No ACK exists yet. Remove only names created by this begin operation.
         if (s->dir) {
@@ -345,6 +495,14 @@ protocol::ChunkAck UploadStorage::write(const UploadSessionPtr &s,
         }
         sync(s->data.get(), true);
         record(s->receipts.get(), protocol::encodeChunkAck(ack));
+        {
+            std::lock_guard<std::mutex> dbGuard(impl_->dbMutex);
+            const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            impl_->db->confirmChunk(s->name, static_cast<std::int64_t>(index),
+                                    toHex(chunk.sha256), now);
+        }
+        s->dbState = "RECEIVING";
         s->hashes[index] = chunk.sha256;
         s->accepted[index] = true;
     } catch (...) {
@@ -384,6 +542,12 @@ protocol::CommitResult UploadStorage::commit(const UploadSessionPtr &s,
         fail("CHECKSUM_MISMATCH", "file digest mismatch");
     try {
         sync(s->data.get());
+        if (s->dbState != "COMMITTING") {
+            std::lock_guard<std::mutex> dbGuard(impl_->dbMutex);
+            impl_->db->setState(s->name, s->dbState, "VERIFYING");
+            impl_->db->setState(s->name, "VERIFYING", "COMMITTING");
+            s->dbState = "COMMITTING";
+        }
         record(s->receipts.get(), "COMMITTING");
         auto target = impl_->target(s->begin.path);
         if (::syscall(SYS_renameat2, s->dir.get(), "data", target.first.get(),
@@ -396,6 +560,11 @@ protocol::CommitResult UploadStorage::commit(const UploadSessionPtr &s,
         sync(s->dir.get());
         s->result = {s->id, s->begin.path, s->begin.size, s->begin.sha256};
         record(s->receipts.get(), "COMMITTED " + protocol::encodeCommitResult(s->result));
+        {
+            std::lock_guard<std::mutex> dbGuard(impl_->dbMutex);
+            impl_->db->setState(s->name, "COMMITTING", "COMMITTED");
+            s->dbState = "COMMITTED";
+        }
         s->committed = true;
     } catch (...) {
         s->poisoned = true;

@@ -10,6 +10,8 @@ M2 BEGIN_UPLOAD已接入会话分配和安全暂存；字段/整数精度/路径
 
 M2 UPLOAD_PLAN返回新会话的全量块区间，不提供重启续传或增量。区间及512区间上限见 [UPLOAD_PLAN.md](UPLOAD_PLAN.md)；空计划不等于文件已提交。
 
+M3 `QUERY_SESSION`(type7) 携带严格的 `session_id` 控制 JSON；活跃会话返回 `SESSION_STATUS`(type8)，字段为 `session_id`、`chunk_size`、`block_count`、`missing_bitmap`。位图为小写十六进制，字节内低位对应较小块索引，1 表示缺失；最大65536块、8192字节原始位图。已提交会话返回 `COMMIT_RESULT`，无效/不可恢复会话返回业务ERROR。请求 ID 仅用于帧关联，不能代替稳定会话 ID。服务端重启会核验已确认块的实际数据与数据库记录；协议格式本身不证明磁盘持久性。
+
 M2 CHUNK_ACK在数据和最小回执持久后发送，固定durable:true契约见 [CHUNK_ACK.md](CHUNK_ACK.md)。业务模式仅在客户端HELLO提出upload且服务端实际启用时协商upload能力，不能把独立握手模式视为支持上传。
 
 COMMIT_UPLOAD(type9)正文仅session_id；COMMIT_RESULT(type10)严格包含session_id、path、size、sha256、committed:true。上传ERROR(type15)仅code/message，支持UploadControl.h白名单。所有控制消息均拒绝重复/未知/缺失、错误类型、NUL尾缀及超限，整数不经double；上传请求ID非零且严格递增。真实流程、错误和发布窗口见 [M2_USAGE.md](M2_USAGE.md)。

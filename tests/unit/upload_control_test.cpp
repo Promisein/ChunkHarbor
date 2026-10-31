@@ -22,6 +22,8 @@ int main() {
         auto valid = encodeCommitResult(r);
         check(decodeCommitResult(valid).size == r.size);
         check(decodeCommitUpload(encodeCommitUpload({})).sessionId == r.sessionId);
+        check(decodeQuerySession(encodeQuerySession({})).sessionId == r.sessionId);
+        rejects([] { decodeQuerySession("{\"session_id\":\"bad\"}"); });
         for (auto text : {"{}", "[]", "{\"session_id\":1}",
                           "{\"session_id\":\"00000000000000000000000000000000\",\"session_id\":"
                           "\"00000000000000000000000000000000\"}"})

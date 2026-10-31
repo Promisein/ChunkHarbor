@@ -10,6 +10,8 @@ class UploadFailure : public std::runtime_error {
 struct CommitUpload {
     std::array<std::uint8_t, 16> sessionId{};
 };
+// QUERY_SESSION (type 7) uses the same strict session-id body as COMMIT_UPLOAD.
+using QuerySession = CommitUpload;
 struct CommitResult {
     std::array<std::uint8_t, 16> sessionId{};
     std::string path;
@@ -21,6 +23,8 @@ struct UploadError {
 };
 std::string encodeCommitUpload(const CommitUpload &);
 CommitUpload decodeCommitUpload(std::string_view);
+std::string encodeQuerySession(const QuerySession &);
+QuerySession decodeQuerySession(std::string_view);
 std::string encodeCommitResult(const CommitResult &);
 CommitResult decodeCommitResult(std::string_view);
 std::string encodeUploadError(const UploadError &);

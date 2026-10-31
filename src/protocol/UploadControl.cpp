@@ -95,6 +95,8 @@ CommitUpload decodeCommitUpload(std::string_view s) {
         bad();
     }
 }
+std::string encodeQuerySession(const QuerySession &q) { return encodeCommitUpload(q); }
+QuerySession decodeQuerySession(std::string_view s) { return decodeCommitUpload(s); }
 std::string encodeCommitResult(const CommitResult &r) {
     validate(r);
     return J{{"session_id", hex(r.sessionId)},

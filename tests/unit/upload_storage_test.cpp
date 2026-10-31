@@ -296,7 +296,7 @@ int main() {
             check(!directorySyncFault);
             check(toHex(sha256File(publishRoot / "files" / value.path)) == value.sha256);
         }
-        rejects([&] { UploadStorage recoveryNotImplemented(publishRoot.string()); });
+        { UploadStorage recovered(publishRoot.string()); }
         auto ackRoot = root / "ack-root";
         fs::create_directory(ackRoot);
         ::chmod(ackRoot.c_str(), 0700);
@@ -320,7 +320,7 @@ int main() {
         auto sessionDir = fs::directory_iterator(ackRoot / ".sessions")->path();
         check(fs::file_size(sessionDir / "data") == 1);
         std::ofstream(sessionDir / "receipts.log", std::ios::app) << "torn";
-        rejects([&] { UploadStorage broken(ackRoot.string()); });
+        { UploadStorage recovered(ackRoot.string()); }
         std::cout << "upload storage passed\n";
     } catch (const std::exception &e) {
         std::cerr << e.what() << '\n';

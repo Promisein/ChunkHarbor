@@ -1,10 +1,10 @@
 # ChunkHarbor
 
-C++17 单向增量备份项目。**M1/M2已完成：Linux CLI可通过自主Reactor服务器完成分块校验、持久块回执、整文件校验和不覆盖发布；Windows Qt提供最小连接/握手原型。** GUI上传、SQLite重启续传和增量备份未实现。当前单文件上限64MiB，仅用于可信loopback/SSH开发。
+C++17 单向增量备份项目。**M1/M2/M3已完成：Linux服务端使用自主Reactor、SQLite持久会话和启动核验；Windows Qt CLI 可保存会话 ID、查询缺失块并续传。** Windows CLI 中断、Ubuntu 服务端重启、Windows CLI 续传的人工验收已通过。GUI上传、固定块增量备份和下载恢复未实现。当前单文件上限64MiB，仅用于可信loopback/SSH开发。
 
 ## Ubuntu 构建与验证
 
-在 Ubuntu 的仓库根目录构建，无需 Qt。依赖 CMake 3.20+、GCC、Make、Python 3、OpenSSL 开发包（Ubuntu `libssl-dev`）；GDB 为可选调试工具。
+在 Ubuntu 的仓库根目录构建，无需 Qt。依赖 CMake 3.20+、GCC、Make、Python 3、OpenSSL 与 SQLite 开发包（Ubuntu `libssl-dev libsqlite3-dev`）；GDB 为可选调试工具。
 
 ```bash
 cd /path/to/ChunkHarbor
@@ -13,7 +13,7 @@ cmake --build build -j 2
 ctest --test-dir build --output-on-failure
 ```
 
-当前Ubuntu有26项CTest，包含M1回归、协议、暂存/持久回执/安全发布、容量1的异步背压、真实CLI上传及恶意响应测试。Debug、ASan/UBSan、Release均通过；Windows纯协议7项、含hash8项通过。完整证据与边界见 [M2验收](docs/M2_VALIDATION.md)，使用/测试/调试见 [M2使用指南](docs/M2_USAGE.md)。M1集成默认100连接，不以功能测试推断吞吐量。
+M3自动验证包含SQLite事务、重启查询、损坏暂存块、数据库写入故障和Windows CLI经SSH的上传与续传。实际测试命令、结果及人工验收步骤见 [M3 验收](docs/M3_VALIDATION.md)；历史结果见 [M2 验收](docs/M2_VALIDATION.md)。M1集成默认100连接，不以功能测试推断吞吐量。
 
 ## 运行文件上传
 
@@ -35,7 +35,7 @@ sha256sum "$source_file" /tmp/chunkharbor-m2-data/files/examples/demo.txt
 ctest --test-dir build -R 'upload_|application_pause' -V
 ```
 
-预期 `UPLOAD OK`，两项摘要一致。目标已存在会拒绝覆盖；测试重跑应换逻辑路径。断连的未完成会话保留并计入上限，不能重启续传；发布中断可能需要后续M3修复，详见使用指南。
+预期 `UPLOAD OK`，两项摘要一致。目标已存在会拒绝覆盖；测试重跑应换逻辑路径。断连的未完成会话可通过查询恢复；Windows CLI 的会话保存和重启续传步骤见 [M3 验收](docs/M3_VALIDATION.md)。未完成会话在30天后于服务端启动时过期并清理暂存文件。
 
 ## 运行 HELLO 握手
 
@@ -84,7 +84,7 @@ ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest 
 
 ## Windows 共享协议测试
 
-使用兼容 C++17 的编译器和 Ninja（加入 PATH），无需 Qt。Windows 默认关闭 Linux server/CLI。以下构建纯C++协议与client_core，不代表Windows原生上传界面；Qt连接原型构建与SSH连接方法见M2_USAGE.md：
+使用兼容 C++17 的编译器和 Ninja（加入 PATH），无需 Qt。Windows 默认关闭 Linux server/CLI。Qt Windows CLI 的构建与使用见 [M3 验收](docs/M3_VALIDATION.md)。以下构建纯C++协议与client_core，不代表Windows原生上传界面；Qt连接原型构建与SSH连接方法见M2_USAGE.md：
 
 ```powershell
 cmake -S . -B build-windows-protocol -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_BUILD_SERVER=OFF -DCHUNKHARBOR_BUILD_CLI=OFF -DCHUNKHARBOR_BUILD_GUI=OFF
@@ -98,4 +98,4 @@ ctest --test-dir build-windows-protocol --output-on-failure
 
 已拆分 `chunkharbor_protocol`、最小 `chunkharbor_client_core`、`chunkharbor_linux_net`。网络采用单线程 LT；多线程 Reactor 为后续可选扩展。每连接输入上限 1 MiB+32，输出上限 4 MiB，高/低水位 1 MiB/512 KiB；积压暂停读，降水位恢复读；每次事件收发有预算，连接数与空闲期有上限。容量限额不包括内核 socket 内存及短暂编码/扩容副本。
 
-未实现：SQLite、重启续传/崩溃自动修复、增量备份、下载恢复、GUI上传、TLS/认证。M2使用最小同步追加回执，而非SQLite事务或恢复协议。完整规格见 [指南](CODEX_DEVELOPMENT_GUIDE.md)，当前结果见 [进度](docs/PROGRESS.md)、[M2验收](docs/M2_VALIDATION.md)。
+未实现：增量备份、下载恢复、GUI上传、TLS/认证。M3把新会话及块确认接入SQLite；文件系统与SQLite之间的发布窗口通过启动核验协调，不能视为跨存储原子事务。旧M2未完成会话若无数据库记录会隔离到 `.quarantine`，不会自动当作已确认块。完整规格见 [指南](CODEX_DEVELOPMENT_GUIDE.md)，当前结果见 [进度](docs/PROGRESS.md)、[M3 验收](docs/M3_VALIDATION.md)。

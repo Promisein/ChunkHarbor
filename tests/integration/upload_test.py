@@ -127,7 +127,7 @@ with tempfile.TemporaryDirectory(prefix='chunkharbor-upload-') as tmp:
         rejected(begin('abandoned', b'other', 4),3,'CONFLICT')
         with connect() as sock:
             hello(sock); sock.sendall(frame(b'{',9,2))
-            assert response(sock,15,2)['code'] == 'SESSION_NOT_FOUND'
+            assert response(sock,15,2)['code'] == 'MALFORMED_MESSAGE'
         with connect() as sock:
             hello(sock)
             sock.sendall(frame(begin('duplicate-id',b'',4),3,1))
