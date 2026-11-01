@@ -1,9 +1,9 @@
 #pragma once
 #include "chunkharbor/protocol/BeginUpload.h"
 #include "chunkharbor/protocol/ChunkAck.h"
+#include "chunkharbor/protocol/SessionStatus.h"
 #include "chunkharbor/protocol/UploadControl.h"
 #include "chunkharbor/protocol/UploadPlan.h"
-#include "chunkharbor/protocol/SessionStatus.h"
 #include <memory>
 namespace chunkharbor {
 struct UploadSession;
@@ -31,6 +31,7 @@ class UploadStorage {
     protocol::CommitResult commit(const UploadSessionPtr &, const protocol::CommitUpload &);
 
   private:
+    friend class DeltaStorage;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

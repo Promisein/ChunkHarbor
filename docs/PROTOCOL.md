@@ -1,4 +1,6 @@
-# M1/M2 帧与上传协议
+# M1–M4 帧与上传协议
+
+M4已接入`fixed_block_delta_v1`能力、type18–21及24–31增量流程，完整契约见[M4_PROTOCOL.md](M4_PROTOCOL.md)，端到端验证见[M4_VALIDATION.md](M4_VALIDATION.md)。未协商能力的连接拒绝扩展业务；已有消息格式与帧版本保持兼容。type18单页格式见[MANIFEST_PAGE.md](MANIFEST_PAGE.md)，该文档的首轮结果保留为历史记录。
 
 当前实现为 `chunkharbor_protocol`，API 在 `protocol/FrameCodec.h`；不含 Linux/Qt 依赖。
 
@@ -16,7 +18,7 @@ M2 CHUNK_ACK在数据和最小回执持久后发送，固定durable:true契约�
 
 COMMIT_UPLOAD(type9)正文仅session_id；COMMIT_RESULT(type10)严格包含session_id、path、size、sha256、committed:true。上传ERROR(type15)仅code/message，支持UploadControl.h白名单。所有控制消息均拒绝重复/未知/缺失、错误类型、NUL尾缀及超限，整数不经double；上传请求ID非零且严格递增。真实流程、错误和发布窗口见 [M2_USAGE.md](M2_USAGE.md)。
 
-固定32字节显式大端序：magic:uint32(0x43484B48)、version:uint16(1)、type:uint16、flags:uint32(0)、request_id:uint64、payload_length:uint64、reserved:uint32(0)。类型1–23识别为已定义编号；识别编号不等于支持对应业务。
+固定32字节显式大端序：magic:uint32(0x43484B48)、version:uint16(1)、type:uint16、flags:uint32(0)、request_id:uint64、payload_length:uint64、reserved:uint32(0)。类型1–31识别为已定义编号；识别编号不等于支持对应业务，22/23仍预留AUTH，32及以上拒绝。
 
 控制类型payload上限64KiB；DATA_CHUNK(5)/DOWNLOAD_CHUNK(14)上限1MiB（包含其业务头）。解析到32字节头后立即检查magic/version/type/flags/reserved/长度；不根据未验证长度分配内存。正文不全返回NeedMore且consumed=0，完整则返回拥有payload的Frame和消费长度，粘包逐帧解析。M1不解析JSON、会话或块哈希。
 

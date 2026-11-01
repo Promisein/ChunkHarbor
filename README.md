@@ -1,6 +1,22 @@
 # ChunkHarbor
 
-C++17 单向增量备份项目。**M1/M2/M3已完成：Linux服务端使用自主Reactor、SQLite持久会话和启动核验；Windows Qt CLI 可保存会话 ID、查询缺失块并续传。** Windows CLI 中断、Ubuntu 服务端重启、Windows CLI 续传的人工验收已通过。GUI上传、固定块增量备份和下载恢复未实现。当前单文件上限64MiB，仅用于可信loopback/SSH开发。
+C++17 单向增量备份项目。**M1–M4已实现并通过自动验收：自主Linux Reactor、SQLite持久会话、断点续传、固定块增量、只读差异预览及目录批任务。** Linux CLI和Windows Qt CLI支持`backup`/`preview`，Windows经SSH真实增量上传和服务端SIGKILL后续传已验证。GUI仍仅为连接原型；下载恢复、TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
+
+M4使用、详细人工复现及自动恢复测试见[M4使用](docs/M4_USAGE.md)；真实构建/测试证据见[M4验证](docs/M4_VALIDATION.md)。旧`upload`命令保持首次上传/已有目标拒绝的语义；重复增量备份使用`backup`。版本对象与最新副本分别存储，尚无历史版本GC或总空间配额。
+
+## 增量备份快速开始
+
+启动下方 Ubuntu 服务端后，在另一终端对专用测试文件执行：
+
+```bash
+work=$(mktemp -d /tmp/chunkharbor-cli-XXXXXXXX)
+printf 'first backup\n' > "$work/source.txt"
+./build/chunkharbor-cli preview --file "$work/source.txt" --path demo/source.txt --state "$work/session.state"
+./build/chunkharbor-cli backup --file "$work/source.txt" --path demo/source.txt --state "$work/session.state"
+./build/chunkharbor-cli backup --file "$work/source.txt" --path demo/source.txt --state "$work/session.state"
+```
+
+第二次备份预期 `blocks_sent_this_run=0`。Windows CLI、SSH 隧道、目录备份与中断续传步骤见 [M4 使用指南](docs/M4_USAGE.md)。
 
 ## Ubuntu 构建与验证
 
@@ -98,4 +114,4 @@ ctest --test-dir build-windows-protocol --output-on-failure
 
 已拆分 `chunkharbor_protocol`、最小 `chunkharbor_client_core`、`chunkharbor_linux_net`。网络采用单线程 LT；多线程 Reactor 为后续可选扩展。每连接输入上限 1 MiB+32，输出上限 4 MiB，高/低水位 1 MiB/512 KiB；积压暂停读，降水位恢复读；每次事件收发有预算，连接数与空闲期有上限。容量限额不包括内核 socket 内存及短暂编码/扩容副本。
 
-未实现：增量备份、下载恢复、GUI上传、TLS/认证。M3把新会话及块确认接入SQLite；文件系统与SQLite之间的发布窗口通过启动核验协调，不能视为跨存储原子事务。旧M2未完成会话若无数据库记录会隔离到 `.quarantine`，不会自动当作已确认块。完整规格见 [指南](CODEX_DEVELOPMENT_GUIDE.md)，当前结果见 [进度](docs/PROGRESS.md)、[M3 验收](docs/M3_VALIDATION.md)。
+未实现：下载恢复、GUI上传、TLS/认证。M4使用schema v2、不可变版本、固定基线和条件发布；文件系统与SQLite之间的发布窗口通过启动核验协调，不能视为跨存储原子事务。新库不能交给旧二进制；真实旧备份根升级前应先备份并审核。旧M2无数据库会话仍隔离。完整规格见[指南](CODEX_DEVELOPMENT_GUIDE.md)，当前结果见[进度](docs/PROGRESS.md)、[M4验证](docs/M4_VALIDATION.md)。

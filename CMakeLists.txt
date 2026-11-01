@@ -30,10 +30,14 @@ if(CHUNKHARBOR_SANITIZERS)
 endif()
 add_library(chunkharbor_protocol src/protocol/FrameCodec.cpp src/protocol/Handshake.cpp
     src/protocol/DataChunk.cpp src/protocol/BeginUpload.cpp src/protocol/UploadPlan.cpp
-    src/protocol/ChunkAck.cpp src/protocol/UploadControl.cpp src/protocol/SessionStatus.cpp)
+    src/protocol/ChunkAck.cpp src/protocol/UploadControl.cpp src/protocol/SessionStatus.cpp
+    src/protocol/ManifestPage.cpp src/protocol/DeltaControl.cpp src/protocol/PlanPage.cpp)
 target_include_directories(chunkharbor_protocol PUBLIC include)
 target_include_directories(chunkharbor_protocol SYSTEM PRIVATE third_party)
-add_library(chunkharbor_client_core src/client_core/EchoExchange.cpp src/client_core/HandshakeExchange.cpp)
+add_library(chunkharbor_client_core src/client_core/EchoExchange.cpp src/client_core/HandshakeExchange.cpp
+    src/client_core/DeltaPlanner.cpp src/client_core/SourceSnapshot.cpp src/client_core/DeltaExchange.cpp
+    src/client_core/DirectoryScanner.cpp src/client_core/BackupBatch.cpp)
+target_include_directories(chunkharbor_client_core SYSTEM PRIVATE third_party)
 target_link_libraries(chunkharbor_client_core PUBLIC chunkharbor_protocol)
 if(CHUNKHARBOR_BUILD_HASH)
     find_package(OpenSSL 1.1.1 REQUIRED COMPONENTS Crypto)
@@ -55,8 +59,8 @@ if(linux_default)
         CHUNKHARBOR_SCHEMA_V1_PATH="${CMAKE_CURRENT_SOURCE_DIR}/src/storage/schema_v1.sql")
     target_link_libraries(chunkharbor_server_core PUBLIC chunkharbor_protocol PRIVATE Threads::Threads SQLite::SQLite3)
     if(CHUNKHARBOR_BUILD_HASH)
-        target_sources(chunkharbor_server_core PRIVATE src/storage/UploadStorage.cpp)
-        target_link_libraries(chunkharbor_server_core PRIVATE chunkharbor_hash)
+        target_sources(chunkharbor_server_core PRIVATE src/storage/UploadStorage.cpp src/storage/DeltaStorage.cpp)
+        target_link_libraries(chunkharbor_server_core PRIVATE chunkharbor_hash chunkharbor_client_core)
     endif()
 endif()
 if(CHUNKHARBOR_BUILD_SERVER)
@@ -72,13 +76,15 @@ if(CHUNKHARBOR_BUILD_CLI)
         if(NOT CHUNKHARBOR_BUILD_HASH)
             message(FATAL_ERROR "Linux CLI upload requires CHUNKHARBOR_BUILD_HASH=ON")
         endif()
-        add_executable(chunkharbor-cli apps/cli/main.cpp apps/cli/EchoClient.cpp apps/cli/UploadClient.cpp)
+        add_executable(chunkharbor-cli apps/cli/main.cpp apps/cli/EchoClient.cpp apps/cli/UploadClient.cpp
+            apps/cli/DeltaCommand.cpp apps/cli/DeltaClient.cpp)
         target_link_libraries(chunkharbor-cli PRIVATE chunkharbor_client_core chunkharbor_hash)
     else()
         find_package(Qt6 6.5 REQUIRED COMPONENTS Core Network)
-        add_executable(chunkharbor-cli apps/cli/QtCliMain.cpp)
+        add_executable(chunkharbor-cli apps/cli/QtCliMain.cpp apps/cli/DeltaCommand.cpp apps/cli/QtDeltaClient.cpp)
         target_link_libraries(chunkharbor-cli PRIVATE chunkharbor_client_core Qt6::Core Qt6::Network)
     endif()
+    target_include_directories(chunkharbor-cli SYSTEM PRIVATE third_party)
 endif()
 if(CHUNKHARBOR_BUILD_GUI)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network)
@@ -91,6 +97,20 @@ if(CHUNKHARBOR_BUILD_GUI)
 endif()
 if(CHUNKHARBOR_BUILD_TESTS)
     enable_testing()
+    foreach(test delta_control plan_page delta_planner client_delta directory_scanner)
+        add_executable(chunkharbor-${test}-test tests/unit/${test}_test.cpp)
+        target_link_libraries(chunkharbor-${test}-test PRIVATE chunkharbor_client_core)
+        if(MSVC)
+            target_compile_options(chunkharbor-${test}-test PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(chunkharbor-${test}-test PRIVATE -UNDEBUG)
+        endif()
+        add_test(NAME ${test}_test COMMAND chunkharbor-${test}-test)
+        set_tests_properties(${test}_test PROPERTIES TIMEOUT 30)
+    endforeach()
+    add_executable(chunkharbor-manifest-page-test tests/unit/manifest_page_test.cpp)
+    target_link_libraries(chunkharbor-manifest-page-test PRIVATE chunkharbor_protocol)
+    add_test(NAME manifest_page_test COMMAND chunkharbor-manifest-page-test)
     if(CHUNKHARBOR_BUILD_GUI)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         add_test(NAME gui_probe_test COMMAND ${Python3_EXECUTABLE}
@@ -137,11 +157,21 @@ if(CHUNKHARBOR_BUILD_TESTS)
         add_test(NAME schema_v1_test COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/schema_v1_test.py
             ${CMAKE_CURRENT_SOURCE_DIR}/src/storage/schema_v1.sql)
+        add_test(NAME schema_v2_test COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/schema_v2_test.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/storage/schema_v1.sql
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/storage/schema_v2.sql)
         add_executable(chunkharbor-sqlite-store-test tests/unit/sqlite_store_test.cpp)
         target_link_libraries(chunkharbor-sqlite-store-test PRIVATE chunkharbor_server_core SQLite::SQLite3)
         add_test(NAME sqlite_store_test COMMAND chunkharbor-sqlite-store-test
             ${CMAKE_CURRENT_SOURCE_DIR}/src/storage/schema_v1.sql)
         if(CHUNKHARBOR_BUILD_HASH)
+            add_executable(chunkharbor-delta-storage-test tests/unit/delta_storage_test.cpp)
+            target_link_libraries(chunkharbor-delta-storage-test PRIVATE chunkharbor_server_core)
+            target_compile_options(chunkharbor-delta-storage-test PRIVATE -UNDEBUG)
+            target_link_options(chunkharbor-delta-storage-test PRIVATE -Wl,--wrap=renameat)
+            add_test(NAME delta_storage_test COMMAND chunkharbor-delta-storage-test)
+            set_tests_properties(delta_storage_test PROPERTIES TIMEOUT 90)
             add_executable(chunkharbor-upload-storage-test tests/unit/upload_storage_test.cpp)
             target_link_libraries(chunkharbor-upload-storage-test PRIVATE chunkharbor_server_core chunkharbor_hash)
             target_link_options(chunkharbor-upload-storage-test PRIVATE -Wl,--wrap=pwrite -Wl,--wrap=fdatasync -Wl,--wrap=write -Wl,--wrap=fsync)
@@ -172,6 +202,13 @@ if(CHUNKHARBOR_BUILD_TESTS)
     endif()
     if(CHUNKHARBOR_BUILD_CLI)
         add_test(NAME cli_help COMMAND chunkharbor-cli --help)
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME delta_cli_peer_test COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_cli_peer_test.py $<TARGET_FILE:chunkharbor-cli>)
+        set_tests_properties(delta_cli_peer_test PROPERTIES TIMEOUT 60)
+        add_test(NAME delta_cli_recovery_peer_test COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_cli_recovery_peer_test.py $<TARGET_FILE:chunkharbor-cli>)
+        set_tests_properties(delta_cli_recovery_peer_test PROPERTIES TIMEOUT 60)
     endif()
     if(CHUNKHARBOR_BUILD_SERVER AND CHUNKHARBOR_BUILD_CLI)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -191,6 +228,26 @@ if(CHUNKHARBOR_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/resume_test.py
             $<TARGET_FILE:chunkharbor-server>)
         set_tests_properties(resume_integration PROPERTIES TIMEOUT 60)
+        add_test(NAME delta_protocol_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_protocol_test.py
+            $<TARGET_FILE:chunkharbor-server>)
+        set_tests_properties(delta_protocol_integration PROPERTIES TIMEOUT 180)
+        add_test(NAME delta_cli_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_cli_test.py
+            $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>)
+        set_tests_properties(delta_cli_integration PROPERTIES TIMEOUT 300)
+        if(NOT CHUNKHARBOR_SANITIZERS)
+            add_library(chunkharbor-delta-crash-hook SHARED tests/helpers/delta_crash_hook.cpp)
+            target_link_libraries(chunkharbor-delta-crash-hook PRIVATE ${CMAKE_DL_LIBS})
+            add_test(NAME delta_recovery_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_recovery_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(delta_recovery_integration PROPERTIES TIMEOUT 120)
+            add_test(NAME delta_fault_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_fault_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(delta_fault_integration PROPERTIES TIMEOUT 120)
+        endif()
         add_test(NAME cli_upload_peer_test COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_upload_peer_test.py
             $<TARGET_FILE:chunkharbor-cli>)

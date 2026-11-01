@@ -1,17 +1,20 @@
 #include "chunkharbor/storage/UploadStorage.h"
+#include "chunkharbor/client_core/DeltaPlanner.h"
 #include "chunkharbor/common/Sha256.h"
-#include "chunkharbor/storage/TempFileStore.h"
+#include "chunkharbor/storage/DeltaStorage.h"
 #include "chunkharbor/storage/SqliteStore.h"
+#include "chunkharbor/storage/TempFileStore.h"
 #include <algorithm>
-#include <chrono>
 #include <cerrno>
+#include <chrono>
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits>
 #include <linux/openat2.h>
-#include <mutex>
 #include <map>
+#include <mutex>
 #include <set>
+#include <sqlite3.h>
 #include <sys/file.h>
 #include <sys/random.h>
 #include <sys/stat.h>
@@ -105,7 +108,8 @@ std::string hashFd(int fd, std::uint64_t size) {
     for (std::uint64_t offset = 0; offset < size;) {
         auto n = ::pread(fd, buffer, std::min<std::uint64_t>(sizeof buffer, size - offset),
                          static_cast<off_t>(offset));
-        if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && errno == EINTR)
+            continue;
         io(n > 0);
         hash.update(std::string_view(buffer, static_cast<std::size_t>(n)));
         offset += static_cast<std::uint64_t>(n);
@@ -155,13 +159,15 @@ struct UploadStorage::Impl {
         sync(root.get());
         auto cleanupSession = [&](int dirfd, const std::string &name) {
             for (const char *file : {"data", "meta.json", "receipts.log"})
-                if (::unlinkat(dirfd, file, 0) < 0) io(errno == ENOENT);
+                if (::unlinkat(dirfd, file, 0) < 0)
+                    io(errno == ENOENT);
             sync(dirfd);
             io(::unlinkat(sessions.get(), name.c_str(), AT_REMOVEDIR) == 0);
             sync(sessions.get());
         };
         std::map<std::string, SqliteStore::Transfer> known;
-        for (auto &t : db->transfers()) known.emplace(t.sessionId, std::move(t));
+        for (auto &t : db->transfers())
+            known.emplace(t.sessionId, std::move(t));
         auto scan = openSafe(sessions.get(), ".", O_RDONLY | O_DIRECTORY);
         DIR *listing = ::fdopendir(scan.get());
         io(listing != nullptr);
@@ -170,13 +176,14 @@ struct UploadStorage::Impl {
             errno = 0;
             while (auto *entry = ::readdir(listing)) {
                 std::string name(entry->d_name);
-                if (name == "." || name == "..") continue;
+                if (name == "." || name == "..")
+                    continue;
                 io(name.size() == 32 &&
                    name.find_first_not_of("0123456789abcdef") == std::string::npos);
                 auto it = known.find(name);
                 if (it == known.end()) {
-                    io(::syscall(SYS_renameat2, sessions.get(), name.c_str(),
-                                 quarantine.get(), name.c_str(), RENAME_NOREPLACE) == 0);
+                    io(::syscall(SYS_renameat2, sessions.get(), name.c_str(), quarantine.get(),
+                                 name.c_str(), RENAME_NOREPLACE) == 0);
                     sync(sessions.get());
                     sync(quarantine.get());
                     errno = 0;
@@ -185,8 +192,7 @@ struct UploadStorage::Impl {
                 auto &t = it->second;
                 auto dir = openSafe(sessions.get(), name, O_RDONLY | O_DIRECTORY);
                 struct stat directoryInfo{};
-                io(::fstat(dir.get(), &directoryInfo) == 0 &&
-                   directoryInfo.st_uid == ::geteuid() &&
+                io(::fstat(dir.get(), &directoryInfo) == 0 && directoryInfo.st_uid == ::geteuid() &&
                    (directoryInfo.st_mode & 0077) == 0);
                 auto childScan = openSafe(dir.get(), ".", O_RDONLY | O_DIRECTORY);
                 DIR *children = ::fdopendir(childScan.get());
@@ -196,13 +202,23 @@ struct UploadStorage::Impl {
                 errno = 0;
                 while (auto *child = ::readdir(children)) {
                     const std::string file(child->d_name);
-                    if (file != "." && file != ".." && file != "data" &&
-                        file != "meta.json" && file != "receipts.log")
+                    if (file != "." && file != ".." && file != "data" && file != "meta.json" &&
+                        file != "receipts.log")
                         unexpected = true;
                 }
                 const bool scanned = errno == 0;
                 ::closedir(children);
                 io(scanned && !unexpected);
+                if (t.state == "COMMITTED" || t.state == "EXPIRED") {
+                    if (t.state == "COMMITTED") {
+                        auto f = committedFile(t.sessionId, t.logicalPath, t.totalSize,
+                                               t.expectedSha256);
+                    }
+                    cleanupSession(dir.get(), name);
+                    known.erase(it);
+                    errno = 0;
+                    continue;
+                }
                 auto meta = regularFile(dir.get(), "meta.json", O_RDONLY);
                 auto b = protocol::decodeBeginUpload(readMeta(meta.get()));
                 io(b.path == t.logicalPath && b.sha256 == t.expectedSha256 &&
@@ -210,7 +226,8 @@ struct UploadStorage::Impl {
                    b.chunkSize == static_cast<std::uint32_t>(t.chunkSize) &&
                    b.mtimeNs == t.mtimeNs && t.tempPath == ".sessions/" + name + "/data");
                 const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
+                                     std::chrono::system_clock::now().time_since_epoch())
+                                     .count();
                 constexpr std::int64_t retentionNs = 30LL * 24 * 60 * 60 * 1000000000;
                 if ((t.state == "CREATED" || t.state == "RECEIVING") &&
                     t.updatedAtNs < now - retentionNs) {
@@ -218,14 +235,19 @@ struct UploadStorage::Impl {
                     t.state = "EXPIRED";
                 }
                 if (t.state == "FAILED") {
-                    io(::syscall(SYS_renameat2, sessions.get(), name.c_str(),
-                                 quarantine.get(), name.c_str(), RENAME_NOREPLACE) == 0);
-                    sync(sessions.get()); sync(quarantine.get());
-                    known.erase(it); errno = 0; continue;
+                    io(::syscall(SYS_renameat2, sessions.get(), name.c_str(), quarantine.get(),
+                                 name.c_str(), RENAME_NOREPLACE) == 0);
+                    sync(sessions.get());
+                    sync(quarantine.get());
+                    known.erase(it);
+                    errno = 0;
+                    continue;
                 }
                 if (t.state == "EXPIRED") {
                     cleanupSession(dir.get(), name);
-                    known.erase(it); errno = 0; continue;
+                    known.erase(it);
+                    errno = 0;
+                    continue;
                 }
                 if (t.state == "COMMITTED") {
                     auto destination = target(b.path);
@@ -235,13 +257,16 @@ struct UploadStorage::Impl {
                        publishedInfo.st_size == static_cast<off_t>(b.size) &&
                        hashFd(file.get(), b.size) == b.sha256);
                     cleanupSession(dir.get(), name);
-                    known.erase(it); errno = 0; continue;
+                    known.erase(it);
+                    errno = 0;
+                    continue;
                 }
                 auto targetFile = target(b.path);
                 struct stat st{};
-                bool published = ::fstatat(targetFile.first.get(), targetFile.second.c_str(),
-                                           &st, AT_SYMLINK_NOFOLLOW) == 0;
-                if (published && t.state != "COMMITTING") fail("CONFLICT", "unpublished session target exists");
+                bool published = ::fstatat(targetFile.first.get(), targetFile.second.c_str(), &st,
+                                           AT_SYMLINK_NOFOLLOW) == 0;
+                if (published && t.state != "COMMITTING")
+                    fail("CONFLICT", "unpublished session target exists");
                 if (published) {
                     auto final = regularFile(targetFile.first.get(), targetFile.second, O_RDONLY);
                     io(st.st_size >= 0 && static_cast<std::uint64_t>(st.st_size) == b.size &&
@@ -249,7 +274,9 @@ struct UploadStorage::Impl {
                     sync(targetFile.first.get());
                     db->setState(name, "COMMITTING", "COMMITTED");
                     cleanupSession(dir.get(), name);
-                    known.erase(it); errno = 0; continue;
+                    known.erase(it);
+                    errno = 0;
+                    continue;
                 }
                 auto data = regularFile(dir.get(), "data", O_RDWR);
                 auto receipts = regularFile(dir.get(), "receipts.log", O_WRONLY | O_APPEND);
@@ -265,7 +292,8 @@ struct UploadStorage::Impl {
                         return c <= '9' ? static_cast<std::uint8_t>(c - '0')
                                         : static_cast<std::uint8_t>(c - 'a' + 10);
                     };
-                    session->id[j] = static_cast<std::uint8_t>((digit(name[2*j]) << 4) | digit(name[2*j+1]));
+                    session->id[j] = static_cast<std::uint8_t>((digit(name[2 * j]) << 4) |
+                                                               digit(name[2 * j + 1]));
                 }
                 session->accepted.resize(blocks(b));
                 session->hashes.resize(blocks(b));
@@ -278,8 +306,10 @@ struct UploadStorage::Impl {
                     while (done < bytes.size()) {
                         auto n = ::pread(data.get(), bytes.data() + done, bytes.size() - done,
                                          static_cast<off_t>(offset + done));
-                        if (n < 0 && errno == EINTR) continue;
-                        if (n <= 0) break;
+                        if (n < 0 && errno == EINTR)
+                            continue;
+                        if (n <= 0)
+                            break;
                         done += static_cast<std::size_t>(n);
                     }
                     if (done != bytes.size() || toHex(sha256(bytes)) != chunk.sha256) {
@@ -289,7 +319,8 @@ struct UploadStorage::Impl {
                     session->accepted[chunk.index] = true;
                     session->hashes[chunk.index] = sha256(bytes);
                 }
-                if (t.state == "VERIFYING") db->setState(name, "VERIFYING", "RECEIVING");
+                if (t.state == "VERIFYING")
+                    db->setState(name, "VERIFYING", "RECEIVING");
                 if (t.state == "COMMITTING" &&
                     std::find(session->accepted.begin(), session->accepted.end(), false) !=
                         session->accepted.end()) {
@@ -300,27 +331,62 @@ struct UploadStorage::Impl {
                 session->data = std::move(data);
                 session->receipts = std::move(receipts);
                 io(paths.insert(b.path).second);
-                reserved += b.size; ++count;
+                reserved += b.size;
+                ++count;
                 io(count <= 32 && reserved <= 512ULL * 1024 * 1024);
                 retained.push_back(std::move(session));
-                known.erase(it); errno = 0;
+                known.erase(it);
+                errno = 0;
             }
             io(errno == 0);
             for (const auto &[name, transfer] : known) {
                 if (transfer.state == "COMMITTED") {
                     io(transfer.totalSize >= 0);
-                    auto destination = target(transfer.logicalPath);
-                    auto file = regularFile(destination.first.get(), destination.second, O_RDONLY);
-                    struct stat info{};
-                    io(::fstat(file.get(), &info) == 0 && info.st_size == transfer.totalSize &&
-                       hashFd(file.get(), static_cast<std::uint64_t>(transfer.totalSize)) ==
-                           transfer.expectedSha256);
+                    auto file = committedFile(name, transfer.logicalPath, transfer.totalSize,
+                                              transfer.expectedSha256);
                 } else if (transfer.state != "FAILED" && transfer.state != "EXPIRED") {
                     db->setState(name, transfer.state, "FAILED");
                 }
             }
-        } catch (...) { ::closedir(listing); throw; }
+        } catch (...) {
+            ::closedir(listing);
+            throw;
+        }
         ::closedir(listing);
+    }
+    UniqueFd committedFile(const std::string &id, const std::string &path, std::uint64_t size,
+                           const std::string &sha) {
+        auto versions = directory(root.get(), ".versions");
+        auto version = directory(versions.get(), id);
+        struct stat st{};
+        if (::fstatat(version.get(), "data", &st, AT_SYMLINK_NOFOLLOW) < 0) {
+            io(errno == ENOENT);
+            auto dest = target(path);
+            auto src = regularFile(dest.first.get(), dest.second, O_RDONLY);
+            io(::fstat(src.get(), &st) == 0 && st.st_size == static_cast<off_t>(size) &&
+               hashFd(src.get(), size) == sha);
+            auto out = regularFile(version.get(), "pending", O_CREAT | O_TRUNC | O_WRONLY, 0600);
+            char buffer[65536];
+            std::uint64_t offset = 0;
+            while (offset < size) {
+                auto n = ::pread(src.get(), buffer,
+                                 std::min<std::uint64_t>(sizeof buffer, size - offset), offset);
+                if (n < 0 && errno == EINTR)
+                    continue;
+                io(n > 0);
+                append(out.get(), std::string_view(buffer, n));
+                offset += n;
+            }
+            sync(out.get());
+            io(::renameat(version.get(), "pending", version.get(), "data") == 0);
+            sync(version.get());
+            sync(versions.get());
+            sync(root.get());
+        }
+        auto out = regularFile(version.get(), "data", O_RDONLY);
+        io(::fstat(out.get(), &st) == 0 && st.st_size == static_cast<off_t>(size) &&
+           hashFd(out.get(), size) == sha);
+        return out;
     }
     std::pair<UniqueFd, std::string> target(const std::string &path) {
         auto fd = openSafe(files.get(), ".", O_RDONLY | O_DIRECTORY);
@@ -349,19 +415,25 @@ QueriedUpload UploadStorage::query(const protocol::QuerySession &request) {
     {
         std::lock_guard<std::mutex> guard(i.mutex);
         for (const auto &item : i.retained)
-            if (item->name == name) { session = item; break; }
+            if (item->name == name) {
+                session = item;
+                break;
+            }
     }
     if (!session) {
         std::lock_guard<std::mutex> guard(i.dbMutex);
         for (const auto &t : i.db->transfers())
             if (t.sessionId == name && t.state == "COMMITTED")
-                return {{}, {}, true,
-                        {request.sessionId, t.logicalPath,
-                         static_cast<std::uint64_t>(t.totalSize), t.expectedSha256}};
+                return {{},
+                        {},
+                        true,
+                        {request.sessionId, t.logicalPath, static_cast<std::uint64_t>(t.totalSize),
+                         t.expectedSha256}};
         fail("SESSION_NOT_FOUND", "unknown or unavailable upload session");
     }
     std::lock_guard<std::mutex> guard(session->mutex);
-    if (session->poisoned) fail("SESSION_NOT_FOUND", "session requires recovery");
+    if (session->poisoned)
+        fail("SESSION_NOT_FOUND", "session requires recovery");
     protocol::SessionStatus status;
     status.sessionId = session->id;
     status.chunkSize = session->begin.chunkSize;
@@ -383,7 +455,32 @@ StartedUpload UploadStorage::begin(const protocol::BeginUpload &b) {
     quotaGeometry(b);
     auto &i = *impl_;
     std::lock_guard<std::mutex> guard(i.mutex);
-    if (i.count >= 32 || b.size > 512ULL * 1024 * 1024 - i.reserved)
+    std::uint64_t deltaReserved = 0;
+    std::size_t deltaCount = 0;
+    {
+        std::lock_guard<std::mutex> dbGuard(i.dbMutex);
+        sqlite3_stmt *stmt = nullptr;
+        io(sqlite3_prepare_v2(
+               i.db->nativeHandle(),
+               "SELECT request FROM delta_sessions WHERE mode=0 AND phase IN (0,1,2,3,4)", -1,
+               &stmt, nullptr) == SQLITE_OK);
+        int step;
+        try {
+            while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+                auto request = protocol::decodeBeginDelta(
+                    reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)));
+                deltaReserved += request.metadata.size;
+                ++deltaCount;
+            }
+            io(step == SQLITE_DONE);
+        } catch (...) {
+            sqlite3_finalize(stmt);
+            throw;
+        }
+        sqlite3_finalize(stmt);
+    }
+    if (i.count + deltaCount >= 32 || b.size + i.reserved + deltaReserved > 512ULL * 1024 * 1024)
+
         fail("QUOTA_EXCEEDED", "retained upload limit reached");
     if (i.paths.count(b.path))
         fail("CONFLICT", "target has an unfinished upload");
@@ -434,8 +531,8 @@ StartedUpload UploadStorage::begin(const protocol::BeginUpload &b) {
         {
             std::lock_guard<std::mutex> dbGuard(i.dbMutex);
             i.db->createTransfer({s->name, b.path, b.sha256, "CREATED",
-                                  static_cast<std::int64_t>(b.size), b.chunkSize,
-                                  b.mtimeNs, 0, ".sessions/" + s->name + "/data"});
+                                  static_cast<std::int64_t>(b.size), b.chunkSize, b.mtimeNs, 0,
+                                  ".sessions/" + s->name + "/data"});
         }
     } catch (...) {
         // No ACK exists yet. Remove only names created by this begin operation.
@@ -498,9 +595,10 @@ protocol::ChunkAck UploadStorage::write(const UploadSessionPtr &s,
         {
             std::lock_guard<std::mutex> dbGuard(impl_->dbMutex);
             const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            impl_->db->confirmChunk(s->name, static_cast<std::int64_t>(index),
-                                    toHex(chunk.sha256), now);
+                                 std::chrono::system_clock::now().time_since_epoch())
+                                 .count();
+            impl_->db->confirmChunk(s->name, static_cast<std::int64_t>(index), toHex(chunk.sha256),
+                                    now);
         }
         s->dbState = "RECEIVING";
         s->hashes[index] = chunk.sha256;
@@ -565,6 +663,8 @@ protocol::CommitResult UploadStorage::commit(const UploadSessionPtr &s,
             impl_->db->setState(s->name, "COMMITTING", "COMMITTED");
             s->dbState = "COMMITTED";
         }
+        auto historical =
+            impl_->committedFile(s->name, s->begin.path, s->begin.size, s->begin.sha256);
         s->committed = true;
     } catch (...) {
         s->poisoned = true;
@@ -590,4 +690,6 @@ protocol::CommitResult UploadStorage::commit(const UploadSessionPtr &s,
     }
     return s->result;
 }
+
+#include "DeltaStorage.inc"
 } // namespace chunkharbor

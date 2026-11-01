@@ -1,0 +1,15 @@
+BEGIN IMMEDIATE;
+DROP TABLE schema_version;
+CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=2));
+INSERT INTO schema_version VALUES(2);
+CREATE TABLE versions(id TEXT PRIMARY KEY CHECK(length(id)=32),path TEXT NOT NULL,size INTEGER NOT NULL,chunk_size INTEGER NOT NULL,sha256 TEXT NOT NULL);
+CREATE TABLE version_chunks(version_id TEXT NOT NULL REFERENCES versions(id),idx INTEGER NOT NULL,sha256 TEXT NOT NULL,length INTEGER NOT NULL,PRIMARY KEY(version_id,idx));
+CREATE TABLE current_files(path TEXT PRIMARY KEY,version_id TEXT NOT NULL REFERENCES versions(id));
+CREATE TABLE legacy_versions(session_id TEXT PRIMARY KEY REFERENCES transfers(session_id),version_id TEXT NOT NULL REFERENCES versions(id));
+CREATE TABLE delta_sessions(id TEXT PRIMARY KEY,request TEXT NOT NULL,logical_path TEXT NOT NULL,mode INTEGER NOT NULL CHECK(mode IN (0,1)),base TEXT REFERENCES versions(id),phase INTEGER NOT NULL CHECK(phase BETWEEN 0 AND 7),next_page INTEGER NOT NULL DEFAULT 0,result TEXT,created INTEGER NOT NULL,version_id TEXT REFERENCES versions(id));
+CREATE UNIQUE INDEX one_active_delta_per_path ON delta_sessions(logical_path) WHERE mode=0 AND phase IN (0,1,2,3,4);
+CREATE TABLE manifest_pages(session TEXT REFERENCES delta_sessions(id),page INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(session,page));
+CREATE TABLE manifest_chunks(session TEXT REFERENCES delta_sessions(id),idx INTEGER NOT NULL,sha TEXT NOT NULL,accepted INTEGER NOT NULL DEFAULT 0,missing INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(session,idx));
+CREATE TABLE delta_plan_ranges(session TEXT REFERENCES delta_sessions(id),idx INTEGER NOT NULL,first INTEGER NOT NULL,last INTEGER NOT NULL,PRIMARY KEY(session,idx));
+PRAGMA user_version=2;
+COMMIT;

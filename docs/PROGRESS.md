@@ -1,8 +1,49 @@
 # ChunkHarbor 开发进度
 
-- 当前阶段：M1/M2/M3已完成；M3 Windows CLI 中断、Ubuntu 服务端重启、Windows CLI 续传的用户人工验收已通过。GUI上传未实现。
+- 当前阶段：M4任务1–13功能实现及自动验收完成。Linux/Windows CLI支持固定块增量、恢复、预览和目录批任务；GUI上传仍未实现。
 - 最近更新：2026-11-01
-- 本轮范围：完成M3 SQLite会话、重启核验/恢复、QUERY_SESSION、Windows CLI状态文件与续传；用户负责最后一项人工验收。历史M2结果保留在下文。
+- 本轮范围：用户明确授权完成M4剩余全部任务，覆盖此前每轮一子任务限制；不跨入M5–M7，不提交/推送。
+
+## M4全阶段完成与最终验证（2026-11-01）
+
+- 已实现：分页manifest/plan、新能力协商、可移植差异算法、schema v2、不可变版本及旧会话映射、持久清单和缺失块、块复用/确认、条件发布/崩溃恢复、双平台CLI backup/preview、源快照核验、目录扫描/取消/重试/汇总。所有阶段仍使用既有Reactor和有界工作池。
+- Ubuntu新建源码隔离目录`/tmp/chunkharbor-m4-full-umBcFYdE`：最终Debug配置/构建/CTest **44/44通过**，Release **44/44通过**，ASan/UBSan **42/42通过**（两个LD_PRELOAD测试不与sanitizer组合）。最终完整测试包含FIFO拒绝、换块大小不污染旧版本、SQLite确认失败不ACK和新增错误注入。
+- Windows Qt6.8.3/MinGW13.1/Ninja：独立`build-windows-m4`配置/构建/CTest **17/17通过**。`python tests/integration/windows_delta_ssh_test.py build-windows-m4/chunkharbor-cli.exe miniob-ubuntu /tmp/chunkharbor-m4-full-umBcFYdE/build/chunkharbor-server`真实通过：全量/0块/1块、预览、中文目录、Windows客户端中断及Ubuntu SIGKILL后同源续传、最终SHA一致。专用测试根`/tmp/chunkharbor-m4-win-ll0a8yan`保留供检查。
+- 真实恢复：Linux原生rename屏障及四个LD_PRELOAD屏障精确暂停后SIGKILL；Linux CLI和目录批任务真实SIGINT后恢复、跳过已完成文件。错误注入覆盖ENOSPC、fdatasync、对象fsync、发布目录fsync及SQLite确认触发器；不等同硬件掉电/真实磁盘满。
+- 审阅及修复：发布临时文件移入内部.delta避免碰撞用户合法.publish-ID；缩短/截空预览用明确change_kind而非零缺失块推断；已完成preview释放活跃槽并有逻辑元数据配额；不变内容换块大小不修改旧version_chunks；新Linux源文件open使用O_NONBLOCK避免FIFO阻塞。关键审阅问题已回归，最终P2修复经独立复审确认。
+- 此前发现的M3 COMMITTED/EXPIRED清理缺meta启动失败已在兼容路径修复；旧会话读取不可变历史对象，最新副本另行校验。旧M3恢复/协议回归通过；未对用户真实备份目录执行升级。
+- Ruling：存储实现集中于DeltaStorage内部、通过UploadStorage共享根锁/FD/SQL所有权，未按原建议拆成独立VersionStore/DeltaSessionStore，以避免双锁与双份路径安全代码；新增网络状态接入既有UploadHandler以共享握手/背压。对应功能及错误路径仍逐项测试。
+- Ruling：PlanDone新增严格change_kind（Added/Modified/Unchanged），由基线大小及整文件摘要判断；预览逻辑元数据64MiB、总20000会话，只有COLLECTING占8活跃名额；串行目录待处理队列实际仅1项，小于128上限。
+- 过程边界：部分并行模块先实现后补测试，不能宣称全部严格TDD；manifest/FrameCodec/planner消费边界、预览契约、FIFO、版本几何等确有红绿记录。Windows曾并行构建同目录导致对象损坏，后改独立目录单构建通过，失败未计为成功。
+- 具体命令、结果及详细人工复现见`docs/M4_VALIDATION.md`、`docs/M4_USAGE.md`。本轮无需用户先人工测试才能继续；可按文档复现并反馈结果。未运行TSan、物理掉电/磁盘满、性能基准、GUI上传或打包；内部历史版本无自动GC和正式总空间配额。未提交/推送。
+
+以下各节为前轮设计、M3/M2历史记录；“未实现/未修复”等状态以本节及源码为准。
+
+## M4任务1实现与验证（2026-11-01）
+
+- 新增ManifestPage.h/.cpp和manifest_page_test，注册既有protocol及CTest；四字段严格JSON、512摘要/128页边界、最大控制正文、hex/整数/NUL/嵌套校验；可信文件几何和页序单独验证。
+- 返回对象拥有摘要数据，不引入Qt/POSIX/OpenSSL依赖或持久状态；没有修改服务端业务、旧消息及能力协商。新增单测包含完整帧golden、拆包粘包、末页、65536块、错误会话、数组/整数超限及文本边界。
+- TDD：可编译空实现的新增测试先失败（manifest assertion failed），实现后Windows构建及全量CTest **10/10通过**。Ubuntu新建隔离目录`/tmp/chunkharbor-m4-aaEMsbwA`配置/构建/全量CTest **31/31通过**；补充测试后Windows全量10/10、Ubuntu重新构建及专项1/1通过。命令、依赖路径和边界见`docs/MANIFEST_PAGE.md`。
+- 本轮未执行ASan/Release/TSan/GUI或实际增量上传；暂不需要用户人工测试。未提交/推送。
+- 独立只读审阅未发现阻断问题，指出hex长度/类型等独立回归缺测；已补齐会话ID/摘要长度和非法hex、空数组、ID错误类型用例。补充后Windows重新构建/全量10/10、Ubuntu重新构建/专项1/1通过；无实现修改。
+
+## M4 启动：MANIFEST_PAGE设计（2026-11-01）
+
+- 用户明确确认M3正确性已验证并要求进入M4；不重做M3验收，也不把已知清理恢复问题作为本轮纯协议设计的前置任务。该问题并未修复，后续可靠性验证仍需跟踪。
+- 草案见 `docs/superpowers/specs/2026-11-01-m4-manifest-page-design.md`：type18，session_id/page_index/first_block_index/hashes四字段；每页最多512个SHA-256，单页及可信文件上下文分层校验；纯C++17，不依赖Qt/POSIX/OpenSSL。
+- 本轮仅设计，不修改源码、CMake或测试；不广告增量能力，不声称无变化0 DATA_CHUNK已可运行。基线版本、MANIFEST_DONE、分页计划、持久化复制及目录预览为后续独立子任务。
+- 现有衔接限制：BEGIN_UPLOAD拒绝现存目标，旧UPLOAD_PLAN最多512区间；未来增量会话入口和版本保护需单独设计，不能绕过现有冲突检查。
+- 首个实现子任务及测试矩阵已写入草案；设计确认后按TDD实现ManifestPage编解码和上下文校验。
+- 独立只读设计审阅已完成，未发现阻碍首个编解码子任务制定实施计划的重要遗漏。Python按最大全页（512摘要、页127、起始65024）计算紧凑JSON为34407字节，小于65536字节上限；这只是设计尺寸检查，不是新增C++功能测试。
+- 本轮Windows执行 `ctest --test-dir build-windows-m3 --output-on-failure`，现有测试 **9/9通过**；`git diff --check`通过。仅改文档，未重新配置/编译，也未执行Linux、ASan/Release、GUI或新增协议测试；这些结果不能标为本轮通过。未提交/推送。
+
+## M4 完整开发计划（2026-11-01）
+
+- 按用户要求新增 `docs/superpowers/plans/2026-11-01-m4-development-plan.md`，覆盖13个顺序子任务：manifest模块、其余协议、纯差异算法、v2 schema、不可变版本/旧数据兼容、持久清单、差异计划与复制、条件发布恢复、服务端状态机、源快照核心、双平台CLI、只读预览、目录批任务及总验收。任务13再分扫描、接入、验收三轮。
+- 计划明确先单文件增量链路，再续传验证、预览和目录。每项单独测试/审阅，不表示一次授权实现全部M4；本轮未实现任何计划中的接口。
+- 版本对象与最新副本分开，CAS保护目标；预览复用同一算法但不产生上传确认。此为建议设计，需要在相应子任务契约/测试中固定；不宣称已完成schema迁移、版本存储或增量上传。
+- 计划自审覆盖指南M4要求、接口依赖、资源上限、旧M3兼容、失败与恢复测试；修正PLAN_READY到TRANSFERRING的衔接。M3已知清理问题纳入任务5兼容/恢复回归，不重做已有人工验收。
+- 本轮实际检查：`git status --short`、相关约束/源码阅读、`git diff --check`；只编写文档，无需产品构建，未运行CMake/CTest/Linux/Windows功能测试。上一节9/9为此前设计轮结果，不能计作本轮重跑。未提交/推送。
 
 ## M3 当前实现与边界（2026-11-01）
 
@@ -13,6 +54,17 @@
 - 自动测试覆盖 Linux Debug、ASan/UBSan、Release 与 Windows MinGW/Qt；最新精确结果与人工验收输出见 `docs/M3_VALIDATION.md`。M3 源码、测试与文档在同一发布提交中同步。
 - 最新验证：Ubuntu稳定隔离目录 `/home/ning/ChunkHarbor-m3-verify` Debug 30/30、ASan/UBSan 30/30、Release 30/30；Windows Qt CLI 9/9、GUI原型9/9；Windows CLI经SSH隧道真实上传、状态查询及仅补缺失块测试通过。Debug、ASan/Release完整回归均包含最新暂存清理改动。具体命令、人工步骤见 `docs/M3_VALIDATION.md`。
 - 用户人工验收（2026-11-01）：32MiB随机源文件、65536字节分块（512块）；Windows CLI中断前终端显示8行ACK，Ubuntu服务端停止并用同一根目录重启后，Windows CLI查询 `MISSING_BLOCKS=503`，续传本轮发送503块并返回 `UPLOAD OK`。Windows与Ubuntu的SHA-256均为 `8db478eacc5c97f0d242e2145fe19af38a33a541ead56179380b93a20e80e3ff`。只读核对SQLite对应会话为 `COMMITTED`、`total_size=33554432`、`chunk_size=65536`、确认块数512。终端仅显示8行ACK而服务端保存9块，符合中断时最后一块已提交但客户端未打印回执的窗口。
+
+## M3 现状审查（2026-11-01，本轮无实现修改）
+
+- 核对当前 Windows 仓库与 Ubuntu `/home/ning/ChunkHarbor-m3-verify` 的96个源码、头文件、构建及测试文件：除 `apps/server/EchoHandler.cpp` 的尾部空格外一致；本轮开始时 Windows Git 工作区干净。
+- Windows：按 `M3_VALIDATION.md` 的 Qt 6.8.3 / MinGW 13.1 参数重新执行 `cmake -S . -B build-windows-m3 ...`，随后 `cmake --build build-windows-m3 -j 2`、`ctest --test-dir build-windows-m3 --output-on-failure`，配置/构建成功，**9/9通过**。
+- Ubuntu（SSH）：在上述验证目录执行 `cmake -S . -B build && cmake --build build -j 2 && ctest --test-dir build --output-on-failure`，配置/构建成功，Debug **30/30通过**，包含 `resume_integration`。
+- Windows：执行 `python tests/integration/windows_cli_ssh_test.py build-windows-m3/chunkharbor-cli.exe miniob-ubuntu /home/ning/ChunkHarbor-m3-verify/build/chunkharbor-server`，真实隧道上传、会话查询、源文件变化拒绝及仅补缺失块均通过；仅使用脚本新建测试目录。
+- 新发现（未修复）：`UploadStorage::commit` 在数据库已为 COMMITTED 后先删除 `meta.json`，再删除回执及目录；若清理中断，启动扫描却在检查 COMMITTED/EXPIRED 状态前强制读取 `meta.json`，导致整服务拒绝启动。启动清理自身也有相同的中断窗口。下一项应先补可重复清理与回归，再推进M4。
+- 专项复现：通过 SSH 向 `python3 -` 传入一次性探针，复用 `resume_test.py` 帧辅助函数，在新建 `/tmp/chunkharbor-audit-cleanup-*` 目录正常上传提交；正常重启通过。随后人工构造清理中断状态（保留已提交数据库和正式文件，暂存会话目录仅有 `receipts.log`、缺少 `meta.json`），启动退出 **2**、stderr 为 `storage operation failed`；正式文件字节保持正确。补回原元数据后正常启动并清理目录。此为可达磁盘状态模拟，**并非在 unlink 指令窗口实测 SIGKILL 或硬件掉电**。
+- 平台边界：Windows Qt CLI 已实现 `--state`、`status` 和续传；Linux CLI 的 `apps/cli/main.cpp` / `UploadClient.cpp` 仍仅提供首次上传，没有持久会话文件或续传命令。协议和服务端恢复测试通过不等于 Linux CLI 具备该功能。
+- 本轮未重新执行 ASan/UBSan、Release、GUI原型测试、TSan、物理磁盘满、硬件掉电或性能基准；其余验收文档中的结果仍为历史记录。本轮仅更新进度文档，不修改实现、测试或README，不提交/推送。
 
 ## 发布检查（2026-10-31）
 
@@ -106,11 +158,11 @@ DiskExecutor前轮：Ubuntu正式目录CMake配置、构建、CTest **14/14通�
 ## 未验证与边界
 
 - 用户人工“Windows CLI 中断→重启 Ubuntu 服务端→Windows CLI 继续上传”验收已通过。自动化另覆盖服务端 SIGKILL 后查询续传、Windows CLI 中断后状态文件续传与真实 SSH 隧道上传。
-- 未做真实性能基准、TSan、硬件掉电和物理磁盘满测试；故障注入不等于真实硬件恢复。Windows GUI 上传、增量备份、下载恢复、TLS/认证未实现。
+- 未做真实性能基准、TSan、硬件掉电和物理磁盘满测试；故障注入不等于真实硬件恢复。固定块增量已完成；Windows GUI上传、下载恢复、TLS/认证未实现。
 - 单线程 LT Reactor 保留，SQLite 事务只由有界磁盘工作池执行；启动核验在监听前完成。每连接资源上限及单文件64MiB/65536块限制沿用M2；服务端仅监听127.0.0.1。
 - 数据库和文件系统不是一个原子事务；`COMMITTING` 启动核验后才协调状态。异常数据隔离在 `.quarantine`，需运营者检查；30天未更新的 CREATED/RECEIVING 会话启动时自动清理其暂存文件。无历史快照和正式文件总容量配额。
 - 旧M2无数据库记录的未完成会话无法自动升级续传，其目录在M3首次启动时隔离而非删除。根目录须私有且受信任，不对抗恶意本地 root/同UID 进程。
 
 ## 下一步（仅一项）
 
-- [ ] M4下一最小任务：先设计固定块 manifest 与增量计划的协议及可测边界，再接入无变化零 `DATA_CHUNK` 场景。
+- [ ] M5首个最小任务：将已验证的任务/预览核心接入Qt TransferController和QAbstractTableModel，先做单文件备份状态展示与线程边界；按新阶段单独设计验收。
