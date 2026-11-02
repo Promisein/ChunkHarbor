@@ -32,7 +32,8 @@ endif()
 add_library(chunkharbor_protocol src/protocol/FrameCodec.cpp src/protocol/Handshake.cpp
     src/protocol/DataChunk.cpp src/protocol/BeginUpload.cpp src/protocol/UploadPlan.cpp
     src/protocol/ChunkAck.cpp src/protocol/UploadControl.cpp src/protocol/SessionStatus.cpp
-    src/protocol/ManifestPage.cpp src/protocol/DeltaControl.cpp src/protocol/PlanPage.cpp)
+    src/protocol/ManifestPage.cpp src/protocol/DeltaControl.cpp src/protocol/PlanPage.cpp
+    src/protocol/FilesList.cpp src/protocol/Download.cpp)
 target_include_directories(chunkharbor_protocol PUBLIC include)
 target_include_directories(chunkharbor_protocol SYSTEM PRIVATE third_party)
 add_library(chunkharbor_client_core src/client_core/EchoExchange.cpp src/client_core/HandshakeExchange.cpp
@@ -78,7 +79,7 @@ if(CHUNKHARBOR_BUILD_CLI)
             message(FATAL_ERROR "Linux CLI upload requires CHUNKHARBOR_BUILD_HASH=ON")
         endif()
         add_executable(chunkharbor-cli apps/cli/main.cpp apps/cli/EchoClient.cpp apps/cli/UploadClient.cpp
-            apps/cli/DeltaCommand.cpp apps/cli/DeltaClient.cpp)
+            apps/cli/DeltaCommand.cpp apps/cli/DeltaClient.cpp apps/cli/DownloadClient.cpp)
         target_link_libraries(chunkharbor-cli PRIVATE chunkharbor_client_core chunkharbor_hash)
     else()
         find_package(Qt6 6.5 REQUIRED COMPONENTS Core Network)
@@ -98,7 +99,9 @@ if(CHUNKHARBOR_BUILD_GUI)
     add_library(chunkharbor_gui_transfer STATIC
         apps/gui/TransferController.cpp apps/gui/TransferController.h
         apps/gui/BackupWorker.cpp apps/gui/TransferTypes.h
-        apps/gui/QtTcpTransport.cpp apps/gui/QtTcpTransport.h)
+        apps/gui/QtTcpTransport.cpp apps/gui/QtTcpTransport.h
+        apps/gui/ServerFilesModel.cpp apps/gui/ServerFilesModel.h
+        apps/gui/FileListController.cpp apps/gui/FileListController.h)
     set_target_properties(chunkharbor_gui_transfer PROPERTIES AUTOMOC ON)
     target_link_libraries(chunkharbor_gui_transfer PUBLIC chunkharbor_gui_state chunkharbor_client_core Qt6::Network)
     add_library(chunkharbor_gui_pages STATIC apps/gui/MainWindow.cpp apps/gui/MainWindow.h
@@ -153,7 +156,7 @@ if(CHUNKHARBOR_BUILD_GUI)
 endif()
 if(CHUNKHARBOR_BUILD_TESTS)
     enable_testing()
-    foreach(test delta_control plan_page delta_planner client_delta directory_scanner)
+    foreach(test delta_control plan_page delta_planner client_delta directory_scanner files_list download)
         add_executable(chunkharbor-${test}-test tests/unit/${test}_test.cpp)
         target_link_libraries(chunkharbor-${test}-test PRIVATE chunkharbor_client_core)
         if(MSVC)
@@ -175,7 +178,19 @@ if(CHUNKHARBOR_BUILD_TESTS)
         set_tests_properties(gui_state_test PROPERTIES TIMEOUT 20)
         add_executable(chunkharbor-gui-transfer-probe tests/integration/gui_transfer_probe.cpp)
         target_link_libraries(chunkharbor-gui-transfer-probe PRIVATE chunkharbor_gui_pages)
+        add_executable(chunkharbor-gui-files-probe tests/integration/gui_files_probe.cpp apps/gui/styles/styles.qrc)
+        set_target_properties(chunkharbor-gui-files-probe PROPERTIES AUTORCC ON)
+        target_link_libraries(chunkharbor-gui-files-probe PRIVATE chunkharbor_gui_pages)
+        add_test(NAME gui_files_test COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/gui_files_test.py
+            $<TARGET_FILE:chunkharbor-gui-files-probe>)
+        set_tests_properties(gui_files_test PROPERTIES TIMEOUT 90)
         add_executable(chunkharbor-gui-worker-test tests/unit/gui_worker_test.cpp)
+        add_executable(chunkharbor-backup-layout-test tests/unit/backup_layout_test.cpp apps/gui/styles/styles.qrc)
+        set_target_properties(chunkharbor-backup-layout-test PROPERTIES AUTORCC ON)
+        target_link_libraries(chunkharbor-backup-layout-test PRIVATE chunkharbor_gui_pages)
+        add_test(NAME backup_layout_test COMMAND chunkharbor-backup-layout-test)
+        set_tests_properties(backup_layout_test PROPERTIES TIMEOUT 25 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
         target_link_libraries(chunkharbor-gui-worker-test PRIVATE chunkharbor_gui_transfer)
         add_test(NAME gui_worker_test COMMAND chunkharbor-gui-worker-test)
         set_tests_properties(gui_worker_test PROPERTIES TIMEOUT 60)
@@ -186,7 +201,9 @@ if(CHUNKHARBOR_BUILD_TESTS)
             target_compile_options(chunkharbor-gui-pages-test PRIVATE /utf-8)
             target_compile_options(chunkharbor-gui-state-test PRIVATE /utf-8)
             target_compile_options(chunkharbor-gui-worker-test PRIVATE /utf-8)
+            target_compile_options(chunkharbor-backup-layout-test PRIVATE /utf-8)
             target_compile_options(chunkharbor-gui-transfer-probe PRIVATE /utf-8)
+            target_compile_options(chunkharbor-gui-files-probe PRIVATE /utf-8)
         endif()
         add_test(NAME gui_pages_test COMMAND chunkharbor-gui-pages-test)
         set_tests_properties(gui_pages_test PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
@@ -289,6 +306,18 @@ if(CHUNKHARBOR_BUILD_TESTS)
     endif()
     if(CHUNKHARBOR_BUILD_SERVER AND CHUNKHARBOR_BUILD_CLI)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME files_list_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/files_list_test.py
+            $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>)
+        set_tests_properties(files_list_integration PROPERTIES TIMEOUT 90)
+        add_test(NAME download_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/download_test.py
+            $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>)
+        set_tests_properties(download_integration PROPERTIES TIMEOUT 90)
+        add_test(NAME download_peer_test COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/download_peer_test.py
+            $<TARGET_FILE:chunkharbor-cli>)
+        set_tests_properties(download_peer_test PROPERTIES TIMEOUT 90)
         add_test(NAME network_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/network_test.py
             $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>)
@@ -314,6 +343,12 @@ if(CHUNKHARBOR_BUILD_TESTS)
             $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>)
         set_tests_properties(delta_cli_integration PROPERTIES TIMEOUT 300)
         if(NOT CHUNKHARBOR_SANITIZERS)
+            add_library(chunkharbor-download-fault-hook SHARED tests/helpers/download_fault_hook.cpp)
+            target_link_libraries(chunkharbor-download-fault-hook PRIVATE ${CMAKE_DL_LIBS})
+            add_test(NAME download_fault_test COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/download_peer_test.py
+                $<TARGET_FILE:chunkharbor-cli> $<TARGET_FILE:chunkharbor-download-fault-hook>)
+            set_tests_properties(download_fault_test PROPERTIES TIMEOUT 60)
             add_library(chunkharbor-delta-crash-hook SHARED tests/helpers/delta_crash_hook.cpp)
             target_link_libraries(chunkharbor-delta-crash-hook PRIVATE ${CMAKE_DL_LIBS})
             add_test(NAME delta_recovery_integration COMMAND ${Python3_EXECUTABLE}

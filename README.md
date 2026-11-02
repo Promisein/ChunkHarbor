@@ -1,12 +1,14 @@
 # ChunkHarbor
 
-C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。下载恢复、TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
+C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。M6已支持Linux CLI单文件下载校验恢复；GUI恢复、TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
 
 M4使用、详细人工复现及自动恢复测试见[M4使用](docs/M4_USAGE.md)；真实构建/测试证据见[M4验证](docs/M4_VALIDATION.md)。旧`upload`命令保持首次上传/已有目标拒绝的语义；重复增量备份使用`backup`。版本对象与最新副本分别存储，尚无历史版本GC或总空间配额。
 
-Windows中文GUI提供总览、备份、文件、版本、日志、设置六页：后台扫描/哈希、服务端差异预览、真实确认进度、暂停/取消/恢复、本机提交历史、日志筛选导出和设置持久化。文件/版本页只展示本机已核验的提交记录，不代表全服务器目录；恢复按钮禁用。构建和详细操作见[Windows使用](docs/BUILD_WINDOWS.md)，线程与模块结构见[GUI设计](docs/GUI_DESIGN.md)，验收见[M5验证](docs/M5_VALIDATION.md)。
+Windows中文GUI提供总览、备份、文件、版本、日志、设置六页：后台扫描/哈希、服务端差异预览、真实确认进度、暂停/取消/恢复、本机提交历史、日志筛选导出和设置持久化。文件页已接入服务端当前文件分页、翻页/取消及当前页筛选；版本历史页仍为本机提交记录，恢复按钮禁用。构建和详细操作见[Windows使用](docs/BUILD_WINDOWS.md)，线程与模块结构见[GUI设计](docs/GUI_DESIGN.md)，验收见[M5验证](docs/M5_VALIDATION.md)和[GUI列表验证](docs/M6_GUI_FILES_VALIDATION.md)。
 
 ## 增量备份快速开始
+
+M6服务端支持`file_list_v1`受限分页文件列表（最多64条/64KiB），Windows GUI已接入，每页请求32条；CLI尚无列表命令。Linux CLI新增`download --path LOGICAL --output LOCAL`，临时下载、逐块/整文件SHA-256校验后原子发布，拒绝覆盖已有文件。下载协议见[M6下载](docs/M6_DOWNLOAD.md)，用法及双平台验收见[下载验证](docs/M6_DOWNLOAD_VALIDATION.md)；列表协议及历史验收见[M6文件列表](docs/M6_FILES_LIST.md)、[列表验证](docs/M6_VALIDATION.md)。
 
 启动下方 Ubuntu 服务端后，在另一终端对专用测试文件执行：
 
@@ -22,7 +24,7 @@ printf 'first backup\n' > "$work/source.txt"
 
 ## Ubuntu 构建与验证
 
-Windows与Ubuntu使用同一完整Git仓库。Ubuntu保留`apps/gui`源码，通过`-DCHUNKHARBOR_BUILD_GUI=OFF`关闭GUI目标，无需Qt；Windows关闭SERVER、开启GUI。构建目录、SDK和备份数据留在各自机器，不上传Git。Ubuntu主工程已整理旧改动并同步M5，Linux Debug44/44通过；旧改动保存在该仓库的Git stash中，详情见[Ubuntu同步记录](docs/UBUNTU_SYNC.md)。以后同步前仍应先检查`git status`，避免覆盖新的本地修改。
+Windows与Ubuntu使用同一完整Git仓库。Ubuntu保留`apps/gui`源码，通过`-DCHUNKHARBOR_BUILD_GUI=OFF`关闭GUI目标，无需Qt；Windows关闭SERVER、开启GUI。构建目录、SDK和备份数据留在各自机器，不上传Git。Ubuntu原工程`/home/ning/ChunkHarbor`已同步最新M6未提交源码，原`build`构建成功、Linux Debug50/50通过；以后直接在原工程增量构建使用。旧改动保存在该仓库的Git stash中，详情见[Ubuntu同步记录](docs/UBUNTU_SYNC.md)。同步前仍应先检查`git status`，避免覆盖新的本地修改。
 
 在 Ubuntu 的仓库根目录构建，无需 Qt。依赖 CMake 3.20+、GCC、Make、Python 3、OpenSSL 与 SQLite 开发包（Ubuntu `libssl-dev libsqlite3-dev`）；GDB 为可选调试工具。
 
@@ -112,10 +114,10 @@ cmake --build build-windows-protocol
 ctest --test-dir build-windows-protocol --output-on-failure
 ```
 
-本机MinGW13.2共享测试及Qt6.8.3匹配Kit连接原型均已运行；Windows Qt经SSH转发到Ubuntu的真实握手已通过。MSVC、GUI上传及分发打包未验证。
+本机MinGW13.2共享测试及Qt6.8.3匹配Kit连接原型均已运行；Windows Qt经SSH转发到Ubuntu的真实握手已通过。后续真实GUI上传验收见M5_VALIDATION.md；MSVC和正式分发打包未验证。
 
 ## 实现边界
 
 已拆分 `chunkharbor_protocol`、最小 `chunkharbor_client_core`、`chunkharbor_linux_net`。网络采用单线程 LT；多线程 Reactor 为后续可选扩展。每连接输入上限 1 MiB+32，输出上限 4 MiB，高/低水位 1 MiB/512 KiB；积压暂停读，降水位恢复读；每次事件收发有预算，连接数与空闲期有上限。容量限额不包括内核 socket 内存及短暂编码/扩容副本。
 
-未实现：下载恢复、GUI上传、TLS/认证。M4使用schema v2、不可变版本、固定基线和条件发布；文件系统与SQLite之间的发布窗口通过启动核验协调，不能视为跨存储原子事务。新库不能交给旧二进制；真实旧备份根升级前应先备份并审核。旧M2无数据库会话仍隔离。完整规格见[指南](CODEX_DEVELOPMENT_GUIDE.md)，当前结果见[进度](docs/PROGRESS.md)、[M4验证](docs/M4_VALIDATION.md)。
+未实现：GUI下载恢复、TLS/认证。Linux CLI下载不提供覆盖或下载续传。M4使用schema v2、不可变版本、固定基线和条件发布；文件系统与SQLite之间的发布窗口通过启动核验协调，不能视为跨存储原子事务。新库不能交给旧二进制；真实旧备份根升级前应先备份并审核。旧M2无数据库会话仍隔离。完整规格见[指南](CODEX_DEVELOPMENT_GUIDE.md)，当前结果见[进度](docs/PROGRESS.md)、[M4验证](docs/M4_VALIDATION.md)。

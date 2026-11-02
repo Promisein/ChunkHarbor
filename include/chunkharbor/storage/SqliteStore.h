@@ -20,6 +20,8 @@ class SqliteStore {
     SqliteStore(const SqliteStore &) = delete;
     SqliteStore &operator=(const SqliteStore &) = delete;
     std::optional<VersionRecord> currentVersion(std::string_view path) const;
+    // Caller holds the storage DB mutex. At most limit rows; no filesystem I/O.
+    std::vector<VersionRecord> listCurrentFiles(std::string_view afterPath, std::uint32_t limit) const;
     void registerVersion(const VersionRecord &);
     bool compareAndSetCurrent(std::string_view path, const std::optional<std::string> &expected,
                               std::string_view replacement);

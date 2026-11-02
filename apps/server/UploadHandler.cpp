@@ -11,16 +11,19 @@ namespace {
 using namespace chunkharbor;
 using namespace chunkharbor::protocol;
 struct State {
-    bool ready = false, upload = false, busy = false, delta = false;
+    bool ready = false, upload = false, busy = false, delta = false, fileList = false,
+         download = false;
     std::uint64_t highestRequestId = 0;
     UploadSessionPtr session;
     std::optional<SessionId> deltaSession{};
+    DownloadSessionPtr downloadSession;
 };
 struct Reply {
     std::uint16_t type;
     std::string payload;
     UploadSessionPtr session;
     std::optional<SessionId> deltaSession{};
+    DownloadSessionPtr downloadSession{};
 };
 void fail(const TcpConnection::Ptr &connection, std::uint64_t id, const std::string &code,
           const std::string &message) {
@@ -67,12 +70,32 @@ chunkharbor::TcpConnection::MessageCallback makeUploadHandler(chunkharbor::Uploa
                                            "fixed_block_delta_v1") != offer.capabilities.end();
                     if (state->delta)
                         ack.capabilities.push_back("fixed_block_delta_v1");
+                    state->fileList = std::find(offer.capabilities.begin(), offer.capabilities.end(),
+                                               "file_list_v1") != offer.capabilities.end();
+                    if (state->fileList)
+                        ack.capabilities.push_back("file_list_v1");
+                    state->download = std::find(offer.capabilities.begin(), offer.capabilities.end(),
+                                               "download_v1") != offer.capabilities.end();
+                    if (state->download)
+                        ack.capabilities.push_back("download_v1");
                     connection->send(encode({2, request.requestId, encodeHelloAck(ack)}));
                     state->ready = true;
                     continue;
                 }
                 if (request.type == 1)
                     throw MessageError("ALREADY_HANDSHAKEN", "HELLO is only allowed once");
+                const bool listRequest = request.type == 11;
+                if (listRequest && !state->fileList)
+                    throw MessageError("UNSUPPORTED_OPERATION", "File list capability required");
+                const bool downloadRequest = request.type == 13 || request.type == 33;
+                if (downloadRequest && !state->download)
+                    throw MessageError("UNSUPPORTED_OPERATION", "Download capability required");
+                if (downloadRequest && (state->session || state->deltaSession))
+                    throw MessageError("CONFLICT", "Cannot mix upload and download sessions");
+                if (state->downloadSession && !downloadRequest && !listRequest)
+                    throw MessageError("CONFLICT", "Download session already bound");
+                if (request.type == 13 && state->downloadSession)
+                    throw MessageError("CONFLICT", "One download is allowed per connection");
                 const bool deltaRequest = request.type == 18 || request.type == 19 ||
                                           (request.type >= 24 && request.type <= 30) ||
                                           (request.type == 5 && state->deltaSession.has_value());
@@ -80,32 +103,44 @@ chunkharbor::TcpConnection::MessageCallback makeUploadHandler(chunkharbor::Uploa
                     throw MessageError("UNSUPPORTED_OPERATION", "Delta capability required");
                 if (deltaRequest && state->session)
                     throw MessageError("CONFLICT", "Cannot mix upload sessions");
-                if (!deltaRequest && state->deltaSession)
+                if (!listRequest && !downloadRequest && !deltaRequest && state->deltaSession)
                     throw MessageError("CONFLICT", "Cannot mix upload sessions");
                 if (deltaRequest && request.type == 24 && state->deltaSession)
                     throw MessageError("CONFLICT", "One file is allowed per connection");
                 if (deltaRequest && request.type != 24 && request.type != 28 &&
                     request.type != 30 && !state->deltaSession)
                     throw MessageError("SESSION_NOT_FOUND", "Query delta session first");
-                if (!deltaRequest && (!state->upload || (request.type != 3 && request.type != 5 &&
-                                                         request.type != 7 && request.type != 9)))
+                if (!listRequest && !downloadRequest && !deltaRequest &&
+                    (!state->upload || (request.type != 3 && request.type != 5 &&
+                                        request.type != 7 && request.type != 9)))
                     throw MessageError("UNSUPPORTED_OPERATION",
                                        "Operation not negotiated or unsupported");
                 if (!deltaRequest && (request.type == 3 || request.type == 7) && state->session)
                     throw MessageError("CONFLICT", "One file is allowed per connection");
-                if (!deltaRequest && request.type != 3 && request.type != 7 && request.type != 9 &&
-                    !state->session)
+                if (!listRequest && !downloadRequest && !deltaRequest && request.type != 3 && request.type != 7 &&
+                    request.type != 9 && !state->session)
                     throw MessageError("SESSION_NOT_FOUND", "No upload session");
                 const auto id = request.requestId;
                 const std::weak_ptr<TcpConnection> weakConnection = connection;
                 auto session = state->session;
                 auto boundDelta = state->deltaSession;
+                auto downloadSession = state->downloadSession;
                 state->busy = true;
                 connection->pauseReading();
                 const auto submitted = executor.trySubmit(
-                    [&storage, session, delta, deltaRequest, boundDelta,
+                    [&storage, session, delta, deltaRequest, boundDelta, downloadSession,
                      request = std::move(request)]() -> std::any {
                         try {
+                            if (request.type == 13) {
+                                auto opened = storage.openDownload(decodeBeginDownload(request.payload));
+                                return Reply{32, encodeDownloadReady(opened.ready), {}, {}, std::move(opened.session)};
+                            }
+                            if (request.type == 33)
+                                return Reply{14, encodeDownloadChunk(storage.readDownload(
+                                                    downloadSession, decodeGetDownloadChunk(request.payload))), {}};
+                            if (request.type == 11)
+                                return Reply{12, encodeFilesResult(storage.listFiles(
+                                                     decodeListFiles(request.payload))), {}};
                             if (deltaRequest) {
                                 const auto bind = [&](const SessionId &id) {
                                     if (boundDelta && *boundDelta != id)
@@ -219,6 +254,8 @@ chunkharbor::TcpConnection::MessageCallback makeUploadHandler(chunkharbor::Uploa
                                 state->session = std::move(reply.session);
                             if (reply.deltaSession)
                                 state->deltaSession = reply.deltaSession;
+                            if (reply.downloadSession)
+                                state->downloadSession = std::move(reply.downloadSession);
                             peer->send(encode({reply.type, id, std::move(reply.payload)}));
                             // Release this completion's executor capacity before
                             // replaying a buffered follow-up request.

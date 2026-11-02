@@ -1,6 +1,7 @@
 #include "DeltaClient.h"
 #include "EchoClient.h"
 #include "UploadClient.h"
+#include "DownloadClient.h"
 #include "chunkharbor/protocol/UploadControl.h"
 #include <charconv>
 #include <iostream>
@@ -9,9 +10,13 @@
 
 int main(int argc, char *argv[]) {
     try {
+        if (argc > 1 && std::string_view(argv[1]) == "download")
+            return runDownloadCommand(argc, argv);
         if (argc > 1 && (std::string(argv[1]) == "backup" || std::string(argv[1]) == "preview"))
             return runDeltaCommand(argc, argv);
         if (argc == 2 && std::string_view(argv[1]) == "--help") {
+            std::cout << "Download: download --path LOGICAL --output LOCAL [--version-id ID] "
+                         "[--host 127.0.0.1] [--port 8787]. Existing targets are refused.\n";
             std::cout << "Delta: (backup|preview) --file SOURCE --path LOGICAL --state STATE "
                          "[--chunk-size N] [--port N]\nDirectory: (backup|preview) --directory "
                          "ROOT --prefix LOGICAL --state-dir DIR [--exclude COMPONENT]\nPreview "

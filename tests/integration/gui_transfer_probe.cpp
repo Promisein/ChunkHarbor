@@ -28,6 +28,8 @@ int main(int argc, char **argv) {
     config.chunkSize = 32768;
     config.mode = args[6];
     QString operation = args[5];
+    const auto originalDirectory = config.directory;
+    int switchScans = 0;
     bool uploading = false, interrupted = false;
     int heartbeat = 0;
     QTimer beat;
@@ -38,7 +40,8 @@ int main(int argc, char **argv) {
                      [&](const gui::TransferProgress &p) {
                          if (uploading && p.acknowledgedBytes) {
                              std::cout << "ACK=" << p.acknowledgedBytes << '\n' << std::flush;
-                             if (operation == "cancel" && !interrupted) {
+                             if ((operation == "cancel" || operation == "cancel-large") && !interrupted &&
+                                 (operation != "cancel-large" || p.acknowledgedBytes >= 32768)) {
                                  interrupted = true;
                                  c->pauseOrResume();
                                  QTimer::singleShot(150, &app, [&] { c->cancel(); });
@@ -50,7 +53,13 @@ int main(int argc, char **argv) {
                          }
                      });
     QObject::connect(c, &TransferController::finished, &app, [&](const QString &summary, bool ok) {
-        if (!uploading && ok && operation != "preview") {
+        if (operation == "switch-preview" && ok && switchScans < 2 && args.size() > 7) {
+            config.directory = switchScans++ == 0 ? args[7] : originalDirectory;
+            QTimer::singleShot(0, c, [&] { c->scan(config); });
+            return;
+        }
+        if (!uploading && ok && operation != "preview" && operation != "switch-preview" &&
+            operation != "rapid-preview" && operation != "scan-cancel") {
             uploading = true;
             if (operation == "wait") {
                 std::cout << "PREVIEW_READY\n" << std::flush;
@@ -97,7 +106,12 @@ int main(int argc, char **argv) {
         app.exit(ok ? 0 : 2);
     });
     window.show();
-    QTimer::singleShot(0, c, [&] { c->scan(config); });
+    QTimer::singleShot(0, c, [&] {
+        c->scan(config);
+        if (operation == "scan-cancel") c->cancel();
+        if (operation == "rapid-preview")
+            for (int n = 0; n < 5; ++n) c->scan(config);
+    });
     QTimer::singleShot(90000, &app, [&] {
         c->cancel();
         app.exit(124);

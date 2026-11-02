@@ -1,4 +1,5 @@
 #pragma once
+#include "chunkharbor/protocol/DeltaControl.h"
 #include "chunkharbor/protocol/UploadControl.h"
 #include <nlohmann/json.hpp>
 #include <set>

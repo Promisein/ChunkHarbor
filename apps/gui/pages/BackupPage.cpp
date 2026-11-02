@@ -68,8 +68,7 @@ BackupPage::BackupPage(TransferController *controller, SettingsPage *settings, Q
     table->verticalHeader()->setDefaultSectionSize(28);
     table->horizontalHeader()->setFixedHeight(30);
     table->setMinimumHeight(146);
-    table->setMaximumHeight(190);
-    preview->body()->addWidget(table);
+    preview->body()->addWidget(table, 1);
     layout_->addWidget(preview, 1);
     auto *progress = new InfoCard(tr("任务进度"), this);
     auto *current = new QLabel(tr("尚未开始"), progress);

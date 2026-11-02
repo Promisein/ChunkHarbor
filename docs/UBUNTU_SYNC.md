@@ -1,5 +1,27 @@
 # Ubuntu主工程同步（2026-11-02）
 
+## 最新：M6同步到原工程（2026-11-02）
+
+按用户要求，后续默认在`/home/ning/ChunkHarbor`增量构建与使用，不再为每轮验证创建新的源码工程目录。原`build`和依赖缓存继续复用；备份数据应单独存放，不能把源码目录当服务端存储根。
+
+同步前Windows和Ubuntu HEAD均为`bec627014ef2e7a73f1115aba6a9da597e6100eb`，Ubuntu main工作区干净，未发现运行中的ChunkHarbor服务。Windows最新M6仍未提交，因此此次通过源码归档同步工作区内容，不执行pull、reset、commit或push，Git历史和原stash保持不变。
+
+同步242个Git跟踪/未忽略源码文件，包含GUI代码和M6协议、分页、Linux下载及测试；排除`tests/testFiles`的照片/ZIP、构建产物、SDK、Git内部及备份数据。传输文件放原`build`，逐项核对SHA-256，审计清单保存在原仓库`.git/codex-m6-sync-manifest.json`。未覆盖用户测试数据或备份根，未新增源码工程文件夹。
+
+在原工程实际执行下文相同配置（GUI=OFF、SERVER/CLI/TESTS/HASH=ON及既有SQLite/OpenSSL路径），`cmake --build build -j 2`成功，`ctest --test-dir build --output-on-failure`完整 **50/50通过**。日志：`build/m6-configure.log`、`build/m6-build.log`、`build/m6-ctest.log`。本轮未重跑Windows GUI/MSVC/Release/Sanitizer，不将历史结果当本轮重跑。
+
+现在日常入口统一为：
+
+```bash
+cd /home/ning/ChunkHarbor
+./build/chunkharbor-server --help
+./build/chunkharbor-cli --help
+```
+
+Linux CLI的help已包含download；服务端当前支持file_list_v1/download_v1。M6工作区改动在两端都未提交，属预期状态。原工程已完整构建，不再依赖之前/tmp工程的源码或schema文件。
+
+以下为此前M5同步的历史记录。
+
 主工程路径：`/home/ning/ChunkHarbor`，分支main，origin仍为原GitHub地址。已从早期M1工作树快进至完整M5代码，包含GUI源码但GUI目标关闭，不安装Qt，不重建其他测试工程目录。
 
 ## 旧改动处理

@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "QtTcpTransport.h"
 #include "TransferController.h"
+#include "FileListController.h"
 #include "WorkspaceStore.h"
 #include "pages/BackupPage.h"
 #include "pages/DashboardPage.h"
@@ -70,6 +71,7 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
     : QMainWindow(parent), transport_(new QtTcpTransport(this)) {
     store_ = new WorkspaceStore(std::move(dataDirectory), this);
     controller_ = new TransferController(store_, this);
+    fileList_ = new FileListController(this);
     setWindowTitle(tr("ChunkHarbor"));
     resize(1280, 820);
     setMinimumSize(1060, 700);
@@ -142,6 +144,7 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
     auto *stack = new QStackedWidget(root);
     stack->setObjectName("pageStack");
     settings_ = new SettingsPage;
+    fileList_->setEndpoint(settings_->host->text(), static_cast<quint16>(settings_->port->value()));
     address->setText(QString("127.0.0.1:%1").arg(settings_->port->value()));
     auto updatePreferences = [this] {
         auto dir = settings_->logDirectory();
@@ -152,7 +155,7 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
     updatePreferences();
     const QList<QWidget *> pages = {new DashboardPage(controller_, store_, transport_),
                                     new BackupPage(controller_, settings_),
-                                    new FilesPage(store_),
+                                    new FilesPage(fileList_),
                                     new VersionsPage(store_),
                                     new LogsPage(store_),
                                     settings_};
@@ -183,6 +186,7 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
             [this, address](int port) {
                 address->setText(QString("127.0.0.1:%1").arg(port));
                 transport_->disconnectFromServer();
+                fileList_->setEndpoint(settings_->host->text(), static_cast<quint16>(port));
             });
     connect(transport_, &QtTcpTransport::statusChanged, this, [this, badge](const QString &text) {
         store_->appendLog("信息", text);

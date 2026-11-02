@@ -4,10 +4,18 @@
 #include "chunkharbor/protocol/SessionStatus.h"
 #include "chunkharbor/protocol/UploadControl.h"
 #include "chunkharbor/protocol/UploadPlan.h"
+#include "chunkharbor/protocol/FilesList.h"
+#include "chunkharbor/protocol/Download.h"
 #include <memory>
 namespace chunkharbor {
 struct UploadSession;
 using UploadSessionPtr = std::shared_ptr<UploadSession>;
+struct DownloadSession;
+using DownloadSessionPtr = std::shared_ptr<DownloadSession>;
+struct OpenedDownload {
+    DownloadSessionPtr session;
+    protocol::DownloadReady ready;
+};
 struct StartedUpload {
     UploadSessionPtr session;
     protocol::UploadPlan plan;
@@ -29,6 +37,9 @@ class UploadStorage {
     QueriedUpload query(const protocol::QuerySession &);
     protocol::ChunkAck write(const UploadSessionPtr &, const protocol::DataChunk &);
     protocol::CommitResult commit(const UploadSessionPtr &, const protocol::CommitUpload &);
+    protocol::FilesResult listFiles(const protocol::ListFiles &);
+    OpenedDownload openDownload(const protocol::BeginDownload &);
+    protocol::DownloadChunk readDownload(const DownloadSessionPtr &, const protocol::GetDownloadChunk &);
 
   private:
     friend class DeltaStorage;

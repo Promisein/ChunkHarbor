@@ -35,7 +35,11 @@ QString friendly(const std::exception &e) {
     const auto detail = qstr(e.what());
     const auto key = detail.toLower();
     QString message;
-    if (key.contains("checkpoint") || key.contains("state directory"))
+    if (key.contains("pending checkpoint source/configuration mismatch"))
+        message = "该目标有未完成上传，但源文件或配置已变化，不能直接续传；请恢复原文件和配置，或使用新的远端路径备份。";
+    else if (key.contains("full upload target changed"))
+        message = "本任务已完成的文件在服务器上发生变化；首次完整上传不会覆盖，请选择增量备份或新的远端路径。";
+    else if (key.contains("checkpoint") || key.contains("state directory"))
         message = "无法读取或保存续传记录，请检查状态目录权限，并保持原任务的源文件和配置一致。";
     else if (key.contains("source") || key.contains("directory changed"))
         message = "源文件或目录已变化，请恢复原文件以续传，或重新扫描后创建备份。";
@@ -412,6 +416,10 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                         QString("127.0.0.1:%1").arg(config.port) ||
                     saved.value("completed").toBool())
                     continue;
+                const auto relative = QDir(root).relativeFilePath(identity.value("local").toString());
+                const auto expectedPath = config.prefix.isEmpty() ? relative : config.prefix + "/" + relative;
+                if (identity.value("path").toString() != expectedPath)
+                    continue; // A different destination prefix is a separate backup task.
                 bool found = false;
                 for (const auto &r : records)
                     if (r.localPath == identity.value("local").toString() &&
@@ -486,6 +494,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                         .toHex();
                 auto uploadPath = stateDir + "/" + QString::fromLatin1(uploadKey) + ".json";
                 QJsonObject saved;
+                bool ownCompletedFull = false;
                 if (config.resume && QFileInfo::exists(uploadPath)) {
                     saved = readJson(uploadPath);
                     auto previous = saved.value("identity").toObject();
@@ -494,6 +503,10 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                     auto previousSource = previous, currentSource = identity;
                     previousSource.remove("base");
                     currentSource.remove("base");
+                    ownCompletedFull = config.mode == "full" && saved.value("completed").toBool() &&
+                                       previousSource == currentSource;
+                    if (preview && ownCompletedFull)
+                        options.base.kind = BaseSelector::Kind::Auto;
                     if (!saved.value("completed").toBool() && (preview || previous != identity)) {
                         if (previousSource != currentSource)
                             throw std::runtime_error("pending checkpoint source/configuration "
@@ -548,6 +561,11 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                             entry(receipt);
                             log("信息", r.logicalPath + "：" + receipt.note);
                         }
+                    }
+                    if (preview && config.mode == "full" && saved.value("completed").toBool() &&
+                        previousSource == currentSource) {
+                        ownCompletedFull = true;
+                        options.base.kind = BaseSelector::Kind::Auto;
                     }
                     if (!preview) {
                         if (previous != identity) {
@@ -653,6 +671,10 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                     options);
                 r.baseVersion =
                     outcome.plan.baseVersion ? hex(*outcome.plan.baseVersion) : "absent";
+                if (preview && ownCompletedFull && outcome.plan.baseVersion &&
+                    outcome.plan.changeKind != "Unchanged")
+                    throw std::runtime_error("full upload target changed since this task committed; "
+                                             "use incremental mode or a different destination");
                 r.missingBytes = outcome.plan.missingBytes;
                 r.changedBlocks = outcome.plan.missingBlocks;
                 r.change = outcome.plan.changeKind == "Added"       ? "新增"

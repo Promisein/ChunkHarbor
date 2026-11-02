@@ -609,6 +609,30 @@ protocol::ChunkAck UploadStorage::write(const UploadSessionPtr &s,
     }
     return ack;
 }
+protocol::FilesResult UploadStorage::listFiles(const protocol::ListFiles &request) {
+    protocol::encodeListFiles(request);
+    std::vector<VersionRecord> rows;
+    {
+        std::lock_guard<std::mutex> guard(impl_->dbMutex);
+        rows = impl_->db->listCurrentFiles(request.afterPath, request.limit + 1);
+    }
+    protocol::FilesResult result;
+    for (const auto &row : rows) {
+        if (result.files.size() == request.limit) break;
+        result.files.push_back({row.path, row.id, row.size, row.sha256});
+        // Reserve the continuation path even for the tentative final entry.
+        result.nextAfterPath = row.path;
+        try { protocol::encodeFilesResult(result); }
+        catch (const protocol::UploadFailure &) {
+            result.files.pop_back();
+            if (result.files.empty()) throw;
+            result.nextAfterPath = result.files.back().path;
+            return result;
+        }
+    }
+    if (result.files.size() == rows.size()) result.nextAfterPath.clear();
+    return result;
+}
 protocol::CommitResult UploadStorage::commit(const UploadSessionPtr &s,
                                              const protocol::CommitUpload &request) {
     if (!s || s->owner != impl_.get())
@@ -692,4 +716,5 @@ protocol::CommitResult UploadStorage::commit(const UploadSessionPtr &s,
 }
 
 #include "DeltaStorage.inc"
+#include "DownloadStorage.inc"
 } // namespace chunkharbor

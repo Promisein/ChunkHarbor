@@ -1,8 +1,66 @@
 # ChunkHarbor 开发进度
 
-- 当前阶段：M5 Windows中文GUI真实备份集成已完成，具备扫描、差异预览、增量上传、持久续传及本机历史/日志。下一阶段M6下载恢复。
+## M6发布与Ubuntu原工程同步准备（2026-11-02）
+
+- 用户明确授权提交/推送GitHub并同步Ubuntu原项目；范围为已有M6分页、Linux下载、GUI文件列表及重扫/布局修复，不宣称M6全阶段完成。新增忽略`tests/testFiles`，不发布用户照片/ZIP、SDK、构建产物或备份数据。
+- 发布前核对GitHub main与本地基线一致；Ubuntu工作区去除CRLF差异后，没有独有源码，仅缺最新GUI修复及测试文档。归档和最终同步/构建结果以UBUNTU_SYNC.md及本轮实际工具输出为准，不将准备动作当作推送成功。
+
+## 中断重扫与最大化布局修复（2026-11-02）
+
+- 日志和只读会话检查确认春熙路5个文件已COMMITTED，full重新预览仍要求目标不存在而报CONFLICT。仅对完整源/配置匹配的本任务completed记录允许Auto预览，远端须Unchanged，正式上传仍固定Exact基线；保留其他任务已有目标保护及未完成源变化保护，不删有效会话。未完成记录预检补充目的地前缀隔离。
+- 预览卡片stretch=1而表格最大190/内部stretch=0造成标题统计拉高。删除表格最大高度，内部表格stretch=1，不改样式或其他组件。
+- Windows实际构建成功，完整CTest22/22通过；原生Windows0/3/200行普通/最大化/还原/缩放几何测试通过。SSH原工程服务端专项覆盖A/B切换、取消/重扫/续传和SHA-256完整性，及源变化时保留旧会话、独立目的地重传。详细命令、失败记录及验证边界见BUGFIX_RESCAN_LAYOUT.md。
+- 未改变协议/SQLite/持久化格式，不重构线程；未删除用户会话/备份，不提交或推送。未重跑Linux全量测试（本轮没有服务端修改，保留此前清理后的build状态）、Linux GUI/MSVC/Release/Sanitizer。
+
+## Ubuntu build测试产物清理（2026-11-02）
+
+- 按用户要求，仅清理`/home/ning/ChunkHarbor/build`中42个测试可执行文件/故障注入库、旧buffer-sanitized、CTest日志及M6同步临时包/日志，释放83.29MiB，build约195MiB。保留CMakeFiles、deps、构建缓存/静态库及server/CLI；未修改源码、测试源码或用户备份数据。
+- 清理前后server、CLI、CMakeCache.txt、Makefile的SHA-256一致，server/CLI `--help`实际退出0；未重跑CTest以免重新生成已清理产物。删除清单在原仓库`.git/codex-build-cleanup.json`。CHUNKHARBOR_BUILD_TESTS仍开启，后续完整构建可能重新生成测试程序；再次运行CTest前须先重新构建。未提交/推送。
+
+- 当前阶段：M5已完成；M6已完成服务端分页列表、Linux CLI下载恢复及Windows GUI文件页真实分页。GUI恢复、并发资源专项和性能实验尚未完成。
 - 最近更新：2026-11-02
-- 本轮范围：按用户授权整理Ubuntu旧改动并同步主工程；归档旧状态、快进更新、GUI=OFF构建与Linux回归。
+- 本轮范围：按用户要求将最新M6源码同步到Ubuntu原工程并复用原build构建验证，不新增源码工程目录，不提交或推送。
+
+## M6同步Ubuntu原工程（2026-11-02）
+
+- 已将Windows最新未提交M6源码同步到`/home/ning/ChunkHarbor`，复用`build`和既有SQLite/OpenSSL依赖。同步前两端HEAD相同、Ubuntu工作区干净；不修改Git历史，保留原stash。242个源码文件逐项SHA-256一致，审计清单在原`.git`内。
+- 排除Windows `tests/testFiles`的照片/ZIP及构建、SDK、备份数据；未修改`/home/ning/exchangeFiles`数据。未创建新源码工程目录，未启动常驻服务。
+- Ubuntu原工程实际Debug配置/构建成功，完整CTest **50/50通过**（30.57秒，非性能指标），覆盖M6文件列表及下载。命令、日志和同步方式见UBUNTU_SYNC.md；Linux CLI help包含download。
+- 此后日常使用`/home/ning/ChunkHarbor/build/chunkharbor-server`与`chunkharbor-cli`，不再要求/tmp测试构建。同步后的M6仍为未提交改动，不代表已发布GitHub。本轮未重跑Windows/GUI、Release或Sanitizer。
+
+## M6 Windows GUI服务端文件列表（2026-11-02）
+
+- FilesPage改为服务端当前已提交文件，新增ServerFilesModel（QAbstractTableModel）和FileListController；版本历史页仍为本机记录。当前页最多32条，显示逻辑路径、精确字节数、版本和SHA-256；搜索明确仅筛选当前页，不伪造本地路径/时间/服务器总数。
+- QtTcpTransport增加独立请求模式，复用HELLO与file_list_v1；每页新连接、每次仅一个在途请求，保持所属Qt线程异步socket/timer，无阻塞waitFor/扫描或线程等待。5秒握手、10秒响应超时、64KiB控制接收上限、request_id/类型关联及跨游标检查；原连接检测模式和顶部状态含义保留。
+- 刷新/上一页/下一页/取消可用；最多128个历史游标，不累计文件全集。失败保留原页和游标并标记上次结果，修改端口清空旧结果、取消在途查询；关窗按QObject所有权销毁。恢复按钮禁用。详情使用只读可滚动QPlainTextEdit，tooltip整体转义后添加受控标签，远端路径不解释为HTML。
+- 行为红测先确认旧文件页错误地由本机提交填充；实现后Windows Qt6.8.3/MinGW13.1/Ninja构建成功，最终完整CTest **21/21通过**（新增gui_files_test覆盖21类场景，原七类握手及备份worker回归保留）。
+- Ubuntu隔离源码`/tmp/chunkharbor-m6-gui-list-SmsSMQdt`实际GUI=OFF配置/构建成功，完整 **50/50通过**；本轮未改后端协议和存储逻辑。最终Windows原生Qt窗口→SSH→专用Ubuntu根`/tmp/chunkharbor-m6-gui-files-data-UKda26Zy`联调通过：真实CLI提交71文件，首32/次32/返回首32、中文筛选、大小和SHA元数据逐项比对通过。服务与隧道已停止，专用数据根保留供检查。
+- 原生Windows截图检查使用正式qrc/Fusion浅色palette，中文可读，详情多行布局改为滚动文本避免压缩裁切；build/m6-gui-files.png为忽略的测试截图，不上传。独立静态审查发现tooltip富文本问题后修复，复审无剩余Critical/Important；审查者未重跑测试。
+- 失败记录：close专项最初因Qt最后窗口关闭自动退出，返回0但探针没输出；设置测试app不自动退出后通过。offscreen截图缺字形，切到原生Windows平台复核；原生探针输出在4096字节缓冲边界截断，显式flush后通过。详情原生高度检查曾失败，改为只读滚动文本后通过。这些失败未计为成功。
+- 未运行Linux GUI/MSVC/Release/Sanitizer、GUI下载、全新GUI上传端到端及性能/大规模并发；分页是实时视图而非快照，当前仍仅可信loopback/SSH，无TLS/认证。未更新Ubuntu主工程、未触碰用户数据；未提交/推送。
+- 文件映射/设计见M6_GUI_FILES.md，命令与结果见M6_GUI_FILES_VALIDATION.md。下一最小任务：GUI单文件恢复控制器与Qt下载传输适配，复用现有下载协议。
+
+## M6 Linux单文件下载恢复（2026-11-02）
+
+- 新增download_v1能力，13 BEGIN_DOWNLOAD、32 DOWNLOAD_READY、33 GET_DOWNLOAD_CHUNK及14 DOWNLOAD_CHUNK；二进制块复用显式大端DATA_CHUNK布局，前16字节表示version_id。新增32/33只在协商后使用，旧客户端无需改变，旧服务端不支持新下载能力。
+- 仅选择当前已提交版本，可用version_id做当前版本前置条件；固定已打开FD保证后续新版本发布不混读。兼容旧upload COMMITTED原文件，不扫描全库或触发legacy迁移；首次整文件核验与每次有界块读取/哈希均在DiskExecutor。每连接一个下载会话、每请求一块最多256KiB，默认文件上限仍为64MiB；不据此宣称已完成M6并发资源压测。
+- Linux新增`download --path LOGICAL --output LOCAL [--version-id ID] [--port N]`。本地父目录逐组件O_NOFOLLOW固定目录FD；随机O_EXCL/0600临时文件；严格校验响应身份/范围/块哈希与整文件SHA-256；fsync临时文件→renameat2(RENAME_NOREPLACE)→父目录fsync。正常错误RAII清理临时文件，已有目标和发布竞争均拒绝覆盖。目录fsync失败时文件可能已发布，返回失败且保留文件；强制终止可能留隐藏临时文件，不是下载续传。
+- 验证：旧服务端先按预期因缺download_v1红测。Windows Qt6.8.3/MinGW13.1/Ninja实际构建成功，完整CTest **20/20通过**；Ubuntu SSH隔离源码`/tmp/chunkharbor-m6-download-zjetPmKD` Debug配置/构建成功，最终完整CTest **50/50通过**。命令和边界见M6_DOWNLOAD_VALIDATION.md。
+- 真实集成覆盖空/中文/多块二进制、旧upload即时下载、增量版本、发布期间旧FD固定、版本前置条件、重启、已有目标/父目录链接、服务端对象损坏/符号链接/FIFO及非法请求。恶意peer覆盖17类场景，包括已写入一块后断连、整文件/块校验、错误身份与发布竞争；四类LD_PRELOAD注入覆盖ENOSPC、文件/目录fsync、短写+EINTR。不是物理磁盘满或硬件掉电测试。
+- 失败记录：首轮Ubuntu编译将SqliteStore包装器误传给sqlite3语句构造，改为nativeHandle后重建通过；一次恶意peer夹具发送超限控制帧导致正确提前拒绝与测试端BrokenPipe，改为合法长度但错误类型的数据帧后全量通过。独立只读静态审查未发现Critical/Important问题，审查者未独立重跑测试。
+- 未执行Release/Sanitizer/MSVC/Linux GUI、本轮Windows GUI真实上传端到端、GUI下载、下载续传、性能或大规模并发实验；仍限可信loopback/SSH、无认证。没有更新Ubuntu主工程或真实备份数据；未提交/推送。
+- 下一最小任务：Windows GUI文件页接入服务端分页列表及后台任务模型，再接同一下载协议的恢复控制器。
+
+## M6受限分页文件列表（2026-11-02）
+
+- 新增纯C++17 FilesList协议，严格校验字段、重复键、UTF-8路径、整数、顺序及游标；大小以uint64整数处理。默认32条，最多64条，负载最多64KiB，按路径字节序keyset分页；并发变化下是实时视图而非跨页快照。
+- SqliteStore以有界SELECT合并current_files与旧upload的COMMITTED记录，当前版本优先，排除未提交/preview/历史版本；新增幂等COMMITTED路径部分索引，兼容schema v2、不触发数据迁移或正文哈希。EXPLAIN QUERY PLAN实际显示两分支路径索引SEARCH及MERGE，无OFFSET/临时排序。
+- UploadHandler独立协商file_list_v1，沿用有界DiskExecutor、pause/resume及weak_ptr完成回调；不改变上传会话绑定。数据库锁仅覆盖查询，有界值对象在解锁后编码，连接I/O仍归所属loop。
+- TDD：旧Ubuntu服务端真实TCP专项先因未协商file_list_v1断言失败；实现后新增协议/集成测试通过。首轮编译发现DeltaJson辅助头依赖间接包含，补齐DeltaControl/UploadControl头后双平台重新构建成功；失败不计作通过。
+- Windows Qt6.8.3/MinGW13.1/Ninja：`cmake --build build-windows-gui -j 2`成功；`ctest --test-dir build-windows-gui --output-on-failure`完整 **19/19通过**。
+- Ubuntu SSH隔离源码`/tmp/chunkharbor-m6-list-KhFt0dZP`：Debug配置/构建成功，最终完整CTest **46/46通过**。专项涵盖空库、旧upload即时可见且查询不迁移、当前版本去重、未提交/preview不可见、中文排序、64条截页、长路径JSON转义64KiB截页、同连接上传/列表互不干扰、非法输入、缺少握手/能力及重启分页。
+- 未运行Release/ASan/UBSan/TSan、Linux GUI/MSVC、本轮Windows GUI真实上传端到端或下载测试；未做吞吐/内存峰值实验。未改Ubuntu主工程或真实备份数据，默认仍仅loopback/SSH、无认证。
+- 协议及文件映射见M6_FILES_LIST.md；实际命令与验证边界见M6_VALIDATION.md。下一最小任务：BEGIN_DOWNLOAD/DOWNLOAD_CHUNK协议与Linux CLI单文件临时下载、SHA-256校验发布闭环。
 
 ## Ubuntu主工程同步完成（2026-11-02）
 

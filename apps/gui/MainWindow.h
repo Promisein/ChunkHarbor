@@ -4,6 +4,7 @@ class QtTcpTransport;
 class SettingsPage;
 class TransferController;
 class WorkspaceStore;
+class FileListController;
 class QCloseEvent;
 class MainWindow final : public QMainWindow {
   public:
@@ -13,6 +14,7 @@ class MainWindow final : public QMainWindow {
     void connectToLocalServer(quint16 port);
     TransferController *controller() const { return controller_; }
     WorkspaceStore *store() const { return store_; }
+    FileListController *fileListController() const { return fileList_; }
 
   protected:
     void closeEvent(QCloseEvent *) override;
@@ -22,5 +24,6 @@ class MainWindow final : public QMainWindow {
     SettingsPage *settings_;
     WorkspaceStore *store_;
     TransferController *controller_;
+    FileListController *fileList_;
     bool closing_ = false;
 };

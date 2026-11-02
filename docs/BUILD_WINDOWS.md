@@ -25,7 +25,7 @@ CLion若使用cmake-build-windows-gui目录，替换上面的构建目录名即�
 
 ## 连接Ubuntu
 
-2026-11-02手工测试准备时Ubuntu无法访问GitHub，曾通过SSH复制到`/home/ning/ChunkHarbor-gui-test-local-BHyJwFs2`并编译验证。用户完成测试后已要求清理，该测试工程和测试备份根现已删除，不能继续使用旧路径启动。再次测试需先同步最新源码到独立目录并构建；原Ubuntu工程及SQLite/OpenSSL依赖保留。
+Ubuntu原工程`/home/ning/ChunkHarbor`现已同步最新M6并在原`build`完成构建和50/50回归，日常使用原工程，不需要新建源码工程目录。进入`cd /home/ning/ChunkHarbor`后使用`./build/chunkharbor-server`和`./build/chunkharbor-cli`。同步方式及未提交状态见UBUNTU_SYNC.md；此前临时验证工程路径只代表历史测试环境，不应继续作为日常入口。
 
 同日后续清理已将旧验证目录的SQLite开发包移至主项目`/home/ning/ChunkHarbor/build/deps/sqlite`，旧`ChunkHarbor-m3-verify`已删除。未来Ubuntu配置若需要手动指定SQLite头，使用`-DSQLite3_INCLUDE_DIR=/home/ning/ChunkHarbor/build/deps/sqlite/usr/include`；历史验收文档记录的旧路径仅代表当时环境。
 
@@ -48,6 +48,16 @@ ssh -N -o ExitOnForwardFailure=yes -L 18787:127.0.0.1:8787 miniob-ubuntu
 没有该SSH别名时，替换为`Ubuntu用户名@Ubuntu地址`。GUI设置端口18787，点击检查连接。修改端口会失效旧在线状态，任务运行期间设置锁定。
 
 ## 手工体验真实备份
+
+### 三种备份模式
+
+| 模式 | 用途 | 已有文件与会话 |
+| --- | --- | --- |
+| 首次完整上传 | 将文件首次备份到新目标 | 保护其他任务已有目标，不覆盖；同任务完成记录与源配置匹配时可重新核验为未变化 |
+| 断点续传 | 继续上次未完成的任务 | 查询服务端会话，仅补缺失块；源、端点、逻辑路径和分块参数必须与原会话匹配 |
+| 增量备份 | 日常重复备份 | 新文件完整上传，已有文件比较同位置固定块，仅传变化块；无变化为0数据块 |
+
+三种模式都先扫描并预览，再开始备份。中断后先用原配置续传；未完成源内容变化时不能盲续，恢复原内容/配置或使用新远端路径。GUI中“增量备份”用于通常的后续更新，“断点续传”用于恢复未完成会话，不是另一套加密或传输协议。
 
 在另一Windows PowerShell创建专用文件，不使用真实文档：
 

@@ -46,7 +46,7 @@ int main() {
             check(decode(encode(Frame{type, 1, "{}"})).frame.type == type);
         rejected = false;
         try {
-            encode(Frame{32, 1, ""});
+            encode(Frame{34, 1, ""});
         } catch (const std::invalid_argument &) {
             rejected = true;
         }

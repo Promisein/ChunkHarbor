@@ -1,5 +1,13 @@
 # M5 Windows Widgets客户端
 
+## M6服务端文件分页（2026-11-02）
+
+文件页已切换为真实服务端当前文件，版本历史页仍为本机记录。新增ServerFilesModel（QAbstractTableModel）与FileListController，复用QtTcpTransport新增的异步请求模式；每页独立协商file_list_v1，单次在途请求，5秒握手/10秒响应、64KiB接收界限。控制器检查页大小、顺序与游标，成功才替换当前页；失败保留并标注上次结果，取消/端点切换中止旧连接，端点变化清空模型。所有socket/model/timer归Qt事件线程，无阻塞磁盘/网络等待。
+
+每页32条，128个历史游标，提供刷新/翻页/取消及当前页搜索；大小显示精确整数。远端字段在详情使用只读可滚动QPlainTextEdit，悬停提示转义后展示，避免路径解释为HTML。恢复按钮保持禁用，GUI下载是下一独立任务。MainWindow仅组装控制器/页面并转发设置端点，不处理协议。
+
+Windows完整21/21、Linux GUI=OFF50/50、真实Windows原生窗口→SSH→专用Ubuntu服务端71文件分页均通过；详见M6_GUI_FILES.md与M6_GUI_FILES_VALIDATION.md。以下M5与2026-11-01内容作为历史设计记录，其“文件页为本机历史”等表述不代表当前状态。
+
 ## 下拉框与进度显示（2026-11-02）
 
 全部QComboBox统一由widgets/ComboBox.h提供QListView及QStyledItemDelegate，避免平台菜单delegate的方形框与默认箭头；样式和SVG箭头在styles资源内统一维护。备份进度保留8px细条，百分比由上方独立标签显示，避免将文字画在8px轨道内。Windows构建及18/18回归通过，125%/200%截图检查0%、50%、100%可读。仅显示层调整，不改变实际确认字节和传输语义。

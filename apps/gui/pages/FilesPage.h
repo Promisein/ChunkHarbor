@@ -1,7 +1,7 @@
 #pragma once
 #include "WorkspacePage.h"
-class WorkspaceStore;
+class FileListController;
 class FilesPage final : public WorkspacePage {
   public:
-    FilesPage(WorkspaceStore *, QWidget *parent = nullptr);
+    FilesPage(FileListController *, QWidget *parent = nullptr);
 };

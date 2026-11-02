@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "QtTcpTransport.h"
 #include "TransferController.h"
+#include "FileListController.h"
 #include "WorkspaceStore.h"
 #include "chunkharbor/protocol/DataChunk.h"
 #include "pages/BackupPage.h"
@@ -19,6 +20,7 @@
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QTemporaryDir>
+#include <QTableView>
 #include <iostream>
 #include <stdexcept>
 void check(bool v, const char *m) {
@@ -56,10 +58,11 @@ int main(int argc, char **argv) {
         check(connection->text() == "在线", "dashboard follows real transport signal");
         transport.failed();
         check(connection->text() == "离线", "dashboard failure state");
-        FilesPage files(&store);
+        FileListController fileList;
+        FilesPage files(&fileList);
         VersionsPage versions(&store);
         LogsPage logs(&store);
-        auto *fileRows = files.findChild<QStandardItemModel *>("filesModel");
+        auto *fileRows = files.findChild<QTableView *>("filesTable")->model();
         auto *list = versions.findChild<QListWidget *>("versionFiles");
         check(fileRows->rowCount() == 0 && list->count() == 0, "empty real histories");
         gui::FileRecord r;
@@ -80,8 +83,8 @@ int main(int argc, char **argv) {
         other.sha256 = QString(64, 'b');
         other.time = "2026-11-02T02:00:00Z";
         store.addCommit(other);
-        check(fileRows->rowCount() == 1 && list->count() == 1,
-              "latest file grouped by endpoint/path");
+        check(fileRows->rowCount() == 0 && list->count() == 1,
+              "server files must not be populated by local commit history");
         check(versions.findChild<QStandardItemModel *>("versionHistoryModel")->rowCount() == 2,
               "actual versions");
         check(versions.findChild<QLabel *>("versionSha")->text() == other.sha256,
@@ -90,7 +93,7 @@ int main(int argc, char **argv) {
         search->setText("absent-file");
         check(fileRows->rowCount() == 0, "file search");
         search->clear();
-        check(fileRows->rowCount() == 1, "clear file search");
+        check(fileRows->rowCount() == 0, "clear file search does not invent server rows");
         store.appendLog("信息", "真实文件校验完成");
         store.appendLog("警告", "真实连接中断");
         auto *logRows = logs.findChild<QStandardItemModel *>("logModel");

@@ -105,6 +105,8 @@ SqliteStore::SqliteStore(std::string_view databasePath, std::string_view schemaP
                 throw;
             }
         }
+        exec(db_, "CREATE INDEX IF NOT EXISTS committed_transfers_by_path ON "
+                  "transfers(logical_path) WHERE state='COMMITTED'");
     } catch (...) {
         sqlite3_close(db_);
         db_ = nullptr;
@@ -112,6 +114,30 @@ SqliteStore::SqliteStore(std::string_view databasePath, std::string_view schemaP
     }
 }
 SqliteStore::~SqliteStore() { sqlite3_close(db_); }
+std::vector<VersionRecord> SqliteStore::listCurrentFiles(std::string_view afterPath,
+                                                       std::uint32_t limit) const {
+    if (!limit || limit > 65) throw std::invalid_argument("invalid file list limit");
+    // Both branches seek indexed paths. UNION ALL merges bounded ordered branches;
+    // current_files wins over a legacy committed transfer for the same path.
+    Statement q(db_,
+        "SELECT c.path,v.id,v.size,v.chunk_size,v.sha256 FROM current_files c "
+        "JOIN versions v ON v.id=c.version_id WHERE c.path>?1 "
+        "UNION ALL SELECT t.logical_path,t.session_id,t.total_size,t.chunk_size,t.expected_sha256 "
+        "FROM transfers t WHERE t.state='COMMITTED' AND t.logical_path>?1 "
+        "AND NOT EXISTS(SELECT 1 FROM current_files c WHERE c.path=t.logical_path) "
+        "ORDER BY 1 COLLATE BINARY LIMIT ?2");
+    bindText(q.value, 1, afterPath);
+    sqlite3_bind_int(q.value, 2, static_cast<int>(limit));
+    std::vector<VersionRecord> rows;
+    int status;
+    while ((status = sqlite3_step(q.value)) == SQLITE_ROW) {
+        auto textAt = [&](int col) { return std::string(reinterpret_cast<const char *>(sqlite3_column_text(q.value, col))); };
+        rows.push_back({textAt(1), textAt(0), static_cast<std::uint64_t>(sqlite3_column_int64(q.value, 2)),
+                       static_cast<std::uint32_t>(sqlite3_column_int(q.value, 3)), textAt(4)});
+    }
+    if (status != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+    return rows;
+}
 void SqliteStore::createTransfer(const Transfer &t) {
     Statement stmt(
         db_, "INSERT INTO "
