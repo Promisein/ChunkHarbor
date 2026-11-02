@@ -2,7 +2,13 @@
 
 - 当前阶段：M5 Windows中文GUI真实备份集成已完成，具备扫描、差异预览、增量上传、持久续传及本机历史/日志。下一阶段M6下载恢复。
 - 最近更新：2026-11-02
-- 本轮范围：按用户授权整理并发布M5必要源码、资源、测试及文档到GitHub；不覆盖Ubuntu旧工程修改。
+- 本轮范围：按用户授权整理Ubuntu旧改动并同步主工程；归档旧状态、快进更新、GUI=OFF构建与Linux回归。
+
+## Ubuntu主工程同步完成（2026-11-02）
+
+- 展开74项旧状态为82文件：79个与历史版本一致，其余仅README路径/旧进度记录/尾空格，无独有功能需移植。完整include-untracked stash并逐文件核对SHA256后，快进同步M5；保留主项目内部stash与审计JSON，不生成新的外部备份文件夹。
+- GitHub对象经Windows既有代理读取、bundle/SSH导入Ubuntu，origin URL不变，未强制reset。`/home/ning/ChunkHarbor`完整代码含GUI，GUI=OFF无需Qt；SQLite/OpenSSL沿用主项目build/deps。
+- 本轮Ubuntu主工程实际配置/构建成功，Debug44/44通过；工作区干净。同步细节与复现命令见UBUNTU_SYNC.md。未重跑Windows/GUI/Release/Sanitizer，终端GBK解码异常经独立Git核查确认未影响已完成的远端操作。
 
 ## M5发布整理（2026-11-02）
 

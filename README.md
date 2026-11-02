@@ -22,7 +22,7 @@ printf 'first backup\n' > "$work/source.txt"
 
 ## Ubuntu 构建与验证
 
-Windows与Ubuntu建议使用同一完整Git仓库和相同提交。Ubuntu保留`apps/gui`源码即可，通过`-DCHUNKHARBOR_BUILD_GUI=OFF`关闭GUI目标，不需要安装Qt；Windows则关闭SERVER、开启GUI。构建目录、SDK和备份数据留在各自机器，不上传Git。同步前先执行`git status`，存在本地修改时先整理提交或备份，避免直接拉取覆盖。本机Ubuntu旧工程目前存在尚未整合的修改，不能把Windows已发布等同于Ubuntu已同步。
+Windows与Ubuntu使用同一完整Git仓库。Ubuntu保留`apps/gui`源码，通过`-DCHUNKHARBOR_BUILD_GUI=OFF`关闭GUI目标，无需Qt；Windows关闭SERVER、开启GUI。构建目录、SDK和备份数据留在各自机器，不上传Git。Ubuntu主工程已整理旧改动并同步M5，Linux Debug44/44通过；旧改动保存在该仓库的Git stash中，详情见[Ubuntu同步记录](docs/UBUNTU_SYNC.md)。以后同步前仍应先检查`git status`，避免覆盖新的本地修改。
 
 在 Ubuntu 的仓库根目录构建，无需 Qt。依赖 CMake 3.20+、GCC、Make、Python 3、OpenSSL 与 SQLite 开发包（Ubuntu `libssl-dev libsqlite3-dev`）；GDB 为可选调试工具。
 
