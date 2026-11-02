@@ -1,8 +1,10 @@
 # ChunkHarbor
 
-C++17 单向增量备份项目。**M1–M4已实现并通过自动验收：自主Linux Reactor、SQLite持久会话、断点续传、固定块增量、只读差异预览及目录批任务。** Linux CLI和Windows Qt CLI支持`backup`/`preview`，Windows经SSH真实增量上传和服务端SIGKILL后续传已验证。GUI仍仅为连接原型；下载恢复、TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
+C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。下载恢复、TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
 
 M4使用、详细人工复现及自动恢复测试见[M4使用](docs/M4_USAGE.md)；真实构建/测试证据见[M4验证](docs/M4_VALIDATION.md)。旧`upload`命令保持首次上传/已有目标拒绝的语义；重复增量备份使用`backup`。版本对象与最新副本分别存储，尚无历史版本GC或总空间配额。
+
+Windows中文GUI提供总览、备份、文件、版本、日志、设置六页：后台扫描/哈希、服务端差异预览、真实确认进度、暂停/取消/恢复、本机提交历史、日志筛选导出和设置持久化。文件/版本页只展示本机已核验的提交记录，不代表全服务器目录；恢复按钮禁用。构建和详细操作见[Windows使用](docs/BUILD_WINDOWS.md)，线程与模块结构见[GUI设计](docs/GUI_DESIGN.md)，验收见[M5验证](docs/M5_VALIDATION.md)。
 
 ## 增量备份快速开始
 
@@ -19,6 +21,8 @@ printf 'first backup\n' > "$work/source.txt"
 第二次备份预期 `blocks_sent_this_run=0`。Windows CLI、SSH 隧道、目录备份与中断续传步骤见 [M4 使用指南](docs/M4_USAGE.md)。
 
 ## Ubuntu 构建与验证
+
+Windows与Ubuntu建议使用同一完整Git仓库和相同提交。Ubuntu保留`apps/gui`源码即可，通过`-DCHUNKHARBOR_BUILD_GUI=OFF`关闭GUI目标，不需要安装Qt；Windows则关闭SERVER、开启GUI。构建目录、SDK和备份数据留在各自机器，不上传Git。同步前先执行`git status`，存在本地修改时先整理提交或备份，避免直接拉取覆盖。本机Ubuntu旧工程目前存在尚未整合的修改，不能把Windows已发布等同于Ubuntu已同步。
 
 在 Ubuntu 的仓库根目录构建，无需 Qt。依赖 CMake 3.20+、GCC、Make、Python 3、OpenSSL 与 SQLite 开发包（Ubuntu `libssl-dev libsqlite3-dev`）；GDB 为可选调试工具。
 

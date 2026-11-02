@@ -10,6 +10,7 @@ endif()
 option(CHUNKHARBOR_BUILD_SERVER "Build Linux server" ${linux_default})
 option(CHUNKHARBOR_BUILD_CLI "Build Linux CLI" ${linux_default})
 option(CHUNKHARBOR_BUILD_GUI "Build Qt connection prototype" OFF)
+option(CHUNKHARBOR_DEPLOY_GUI "Copy Windows Qt GUI runtime dependencies next to the executable" OFF)
 option(CHUNKHARBOR_BUILD_TESTS "Build tests" ON)
 option(CHUNKHARBOR_SANITIZERS "Enable ASan/UBSan" OFF)
 option(CHUNKHARBOR_BUILD_HASH "Build OpenSSL-backed portable SHA-256 utilities" ${linux_default})
@@ -88,12 +89,67 @@ if(CHUNKHARBOR_BUILD_CLI)
 endif()
 if(CHUNKHARBOR_BUILD_GUI)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network)
-    qt_add_executable(chunkharbor-gui WIN32 apps/gui/main.cpp
-        apps/gui/MainWindow.cpp apps/gui/MainWindow.h
+    add_library(chunkharbor_gui_state STATIC
+        apps/gui/TaskModel.cpp apps/gui/TaskModel.h
+        apps/gui/WorkspaceStore.cpp apps/gui/WorkspaceStore.h)
+    set_target_properties(chunkharbor_gui_state PROPERTIES AUTOMOC ON)
+    target_include_directories(chunkharbor_gui_state PUBLIC apps/gui)
+    target_link_libraries(chunkharbor_gui_state PUBLIC Qt6::Core Qt6::Gui)
+    add_library(chunkharbor_gui_transfer STATIC
+        apps/gui/TransferController.cpp apps/gui/TransferController.h
+        apps/gui/BackupWorker.cpp apps/gui/TransferTypes.h
         apps/gui/QtTcpTransport.cpp apps/gui/QtTcpTransport.h)
-    set_target_properties(chunkharbor-gui PROPERTIES AUTOMOC ON)
+    set_target_properties(chunkharbor_gui_transfer PROPERTIES AUTOMOC ON)
+    target_link_libraries(chunkharbor_gui_transfer PUBLIC chunkharbor_gui_state chunkharbor_client_core Qt6::Network)
+    add_library(chunkharbor_gui_pages STATIC apps/gui/MainWindow.cpp apps/gui/MainWindow.h
+        apps/gui/widgets/InfoCard.cpp apps/gui/widgets/TableKit.cpp apps/gui/pages/WorkspacePage.cpp
+        apps/gui/pages/DashboardPage.cpp apps/gui/pages/BackupPage.cpp
+        apps/gui/pages/FilesPage.cpp apps/gui/pages/VersionsPage.cpp
+        apps/gui/pages/LogsPage.cpp apps/gui/pages/SettingsPage.cpp)
+    set_target_properties(chunkharbor_gui_pages PROPERTIES AUTOMOC ON)
+    target_link_libraries(chunkharbor_gui_pages PUBLIC chunkharbor_gui_transfer Qt6::Widgets)
+    qt_add_executable(chunkharbor-gui WIN32 apps/gui/main.cpp apps/gui/styles/styles.qrc)
+    set_target_properties(chunkharbor-gui PROPERTIES AUTOMOC ON AUTORCC ON)
     target_include_directories(chunkharbor-gui PRIVATE apps/gui)
-    target_link_libraries(chunkharbor-gui PRIVATE chunkharbor_client_core Qt6::Widgets Qt6::Network)
+    target_link_libraries(chunkharbor-gui PRIVATE chunkharbor_gui_pages)
+    find_file(CHUNKHARBOR_QT_ZH_CN_TRANSLATION qtbase_zh_CN.qm
+        HINTS "${Qt6_DIR}/../../../translations" NO_DEFAULT_PATH)
+    if(CHUNKHARBOR_QT_ZH_CN_TRANSLATION)
+        get_filename_component(qt_translation_dir "${CHUNKHARBOR_QT_ZH_CN_TRANSLATION}" DIRECTORY)
+        qt_add_resources(chunkharbor-gui qt_chinese_translations
+            PREFIX "/i18n" BASE "${qt_translation_dir}"
+            FILES "${CHUNKHARBOR_QT_ZH_CN_TRANSLATION}")
+    else()
+        message(WARNING "Qt Simplified Chinese translation not found; standard dialogs use system defaults")
+    endif()
+    if(MSVC)
+        target_compile_options(chunkharbor-gui PRIVATE /utf-8)
+        target_compile_options(chunkharbor_gui_state PRIVATE /utf-8)
+        target_compile_options(chunkharbor_gui_transfer PRIVATE /utf-8)
+        target_compile_options(chunkharbor_gui_pages PRIVATE /utf-8)
+    endif()
+    if(WIN32 AND CHUNKHARBOR_DEPLOY_GUI)
+        find_program(CHUNKHARBOR_WINDEPLOYQT_EXECUTABLE NAMES windeployqt
+            HINTS "${Qt6_DIR}/../../../bin" NO_DEFAULT_PATH REQUIRED)
+        get_filename_component(qt_runtime_bin "${CHUNKHARBOR_WINDEPLOYQT_EXECUTABLE}" DIRECTORY)
+        get_filename_component(compiler_runtime_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        add_custom_command(TARGET chunkharbor-gui POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E env
+                "PATH=${qt_runtime_bin};${compiler_runtime_bin};$ENV{PATH}"
+                "${CHUNKHARBOR_WINDEPLOYQT_EXECUTABLE}"
+                --no-translations --no-opengl-sw --compiler-runtime
+                "$<TARGET_FILE:chunkharbor-gui>"
+            COMMENT "Deploying Qt GUI runtime libraries and platform plugins"
+            VERBATIM)
+        # Existing headless GUI probes use this test-only platform plugin.
+        if(CHUNKHARBOR_BUILD_TESTS AND EXISTS "${qt_runtime_bin}/../plugins/platforms/qoffscreen.dll")
+            add_custom_command(TARGET chunkharbor-gui POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${qt_runtime_bin}/../plugins/platforms/qoffscreen.dll"
+                    "$<TARGET_FILE_DIR:chunkharbor-gui>/platforms/qoffscreen.dll"
+                VERBATIM)
+        endif()
+    endif()
 endif()
 if(CHUNKHARBOR_BUILD_TESTS)
     enable_testing()
@@ -113,6 +169,27 @@ if(CHUNKHARBOR_BUILD_TESTS)
     add_test(NAME manifest_page_test COMMAND chunkharbor-manifest-page-test)
     if(CHUNKHARBOR_BUILD_GUI)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_executable(chunkharbor-gui-state-test tests/unit/gui_state_test.cpp)
+        target_link_libraries(chunkharbor-gui-state-test PRIVATE chunkharbor_gui_state)
+        add_test(NAME gui_state_test COMMAND chunkharbor-gui-state-test)
+        set_tests_properties(gui_state_test PROPERTIES TIMEOUT 20)
+        add_executable(chunkharbor-gui-transfer-probe tests/integration/gui_transfer_probe.cpp)
+        target_link_libraries(chunkharbor-gui-transfer-probe PRIVATE chunkharbor_gui_pages)
+        add_executable(chunkharbor-gui-worker-test tests/unit/gui_worker_test.cpp)
+        target_link_libraries(chunkharbor-gui-worker-test PRIVATE chunkharbor_gui_transfer)
+        add_test(NAME gui_worker_test COMMAND chunkharbor-gui-worker-test)
+        set_tests_properties(gui_worker_test PROPERTIES TIMEOUT 60)
+        add_executable(chunkharbor-gui-pages-test tests/unit/gui_pages_test.cpp)
+        target_include_directories(chunkharbor-gui-pages-test PRIVATE apps/gui)
+        target_link_libraries(chunkharbor-gui-pages-test PRIVATE chunkharbor_gui_pages)
+        if(MSVC)
+            target_compile_options(chunkharbor-gui-pages-test PRIVATE /utf-8)
+            target_compile_options(chunkharbor-gui-state-test PRIVATE /utf-8)
+            target_compile_options(chunkharbor-gui-worker-test PRIVATE /utf-8)
+            target_compile_options(chunkharbor-gui-transfer-probe PRIVATE /utf-8)
+        endif()
+        add_test(NAME gui_pages_test COMMAND chunkharbor-gui-pages-test)
+        set_tests_properties(gui_pages_test PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
         add_test(NAME gui_probe_test COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/gui_probe_test.py
             $<TARGET_FILE:chunkharbor-gui>)

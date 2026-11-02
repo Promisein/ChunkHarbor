@@ -7,15 +7,17 @@
 
 class QtTcpTransport final : public QObject {
     Q_OBJECT
-public:
-    explicit QtTcpTransport(QObject* parent = nullptr);
-    void connectToServer(const QString& host, quint16 port);
-signals:
-    void statusChanged(const QString& text);
+  public:
+    explicit QtTcpTransport(QObject *parent = nullptr);
+    void connectToServer(const QString &host, quint16 port);
+    void disconnectFromServer();
+  signals:
+    void statusChanged(const QString &text);
     void ready();
     void failed();
-private:
-    void fail(const QString& message);
+
+  private:
+    void fail(const QString &message);
     void receive();
     QTcpSocket socket_;
     QTimer timer_;

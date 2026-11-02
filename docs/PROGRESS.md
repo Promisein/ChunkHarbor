@@ -1,8 +1,91 @@
 # ChunkHarbor 开发进度
 
-- 当前阶段：M4任务1–13功能实现及自动验收完成。Linux/Windows CLI支持固定块增量、恢复、预览和目录批任务；GUI上传仍未实现。
-- 最近更新：2026-11-01
-- 本轮范围：用户明确授权完成M4剩余全部任务，覆盖此前每轮一子任务限制；不跨入M5–M7，不提交/推送。
+- 当前阶段：M5 Windows中文GUI真实备份集成已完成，具备扫描、差异预览、增量上传、持久续传及本机历史/日志。下一阶段M6下载恢复。
+- 最近更新：2026-11-02
+- 本轮范围：按用户授权整理并发布M5必要源码、资源、测试及文档到GitHub；不覆盖Ubuntu旧工程修改。
+
+## M5发布整理（2026-11-02）
+
+- 用户明确授权上传GitHub。发布包括中文六页GUI、真实扫描/预览/上传/续传、任务模型、本机历史/日志/设置、统一下拉框与独立百分比、相关资源/测试/文档，排除构建目录、临时截图/探针、SDK、备份数据。删除不再参与构建的旧DemoData示例文件。
+- GitHub直连443失败，使用Windows系统已配置的127.0.0.1:7897代理成功读取远端，未修改全局Git代理配置。发布前远端main为db09608（M4）。
+- README补充同仓跨平台策略：Ubuntu同步完整源码但GUI=OFF，无需Qt；构建及备份数据不进入Git。Ubuntu /home/ning/ChunkHarbor当前有74项本地改动，版本仍为早期M1提交；本轮不对其pull/reset或覆盖，不能宣称Ubuntu已同步发布提交。
+- Windows发布前实际执行`cmake --build build-windows-gui -j 2`成功（无待编译项），完整CTest18/18通过；暂存48个必要文件，路径/明显凭据与构建产物扫描及diff检查通过。Git提交/推送以本轮工具输出为准；此前Ubuntu44/44、真实SSH及样式截图属于历史验收，不作为本轮重跑。
+
+## GUI下拉列表与百分比显示修复（2026-11-02）
+
+- 根因：QComboBox弹出列表仍使用平台菜单delegate，缺少统一的列表项/箭头/边框样式；QProgressBar被QSS限制为8px高度却仍绘制百分比文本，造成0%等文字裁切。
+- 新增widgets/ComboBox.h供Backup/Files/Logs/Settings全部下拉框共用，使用QListView和QStyledItemDelegate、统一列表间距及无系统框线的弹出容器；Light.qss统一圆角白底、浅蓝选中/悬停/焦点态，资源内新增矢量chevron-down.svg。
+- BackupPage隐藏细进度条内置文本，将百分比放到上方独立QLabel，未知总量显示破折号；实际确认进度与任务结束信号继续更新0–100%。控件和delegate沿用Qt父子所有权，无网络/工作线程或协议修改。
+- Windows Qt6.8.3/MinGW13.1：`cmake --build build-windows-gui -j 2`成功，`ctest --test-dir build-windows-gui --output-on-failure`18/18通过。使用隔离QSettings/临时数据目录的截图工具检查文件/日志/备份/设置下拉框及0/50/100%布局，系统125%及QT_SCALE_FACTOR=1.6（合计200%）下数值标签高度不小于字体高度，进度条不再绘制文字。图像使用与正式main相同的浅色palette并等待重绘；首次辅助截图未设置palette出现暗色容器，修正截图环境后复查正常。
+- 未执行Linux GUI/MSVC或新的真实上传联调；本轮仅样式和显示布局修复，原M5验收作为历史结果。产品构建保留用户当前CLion窗口未关闭；用户需关闭旧窗口后重新构建运行。未提交/推送。
+
+## 旧备份与验证目录清理（2026-11-02）
+
+- 用户明确要求ChunkHarbor相关仅保留主项目目录。核对两个bundle的HEAD均存在Windows主项目Git历史，旧m3-verify仅含SQLite开发包，没有额外源码或用户数据。
+- 先将SQLite完整复制至`/home/ning/ChunkHarbor/build/deps/sqlite`，保留包内符号链接并逐项核对15个条目的类型、链接目标与文件SHA256；`c++ -x c++ -fsyntax-only`实际包含sqlite3.h检查通过。未覆盖主项目已有文件。
+- 校验后删除`/home/ning/ChunkHarbor-buffer-base.bundle`、`ChunkHarbor-m1.bundle`、`ChunkHarbor-before-buffer-20261030.tar.gz`、`ChunkHarbor-m3-verify`。事后枚举/home/ning的ChunkHarbor相关项仅剩`ChunkHarbor`；MiniLogDB及系统/个人目录保留。
+- 主项目现有CMake缓存未发现旧SQLite目录引用。历史验收文档中的旧路径属于当时执行证据，保留原文；未来配置使用BUILD_WINDOWS.md注明的新依赖路径。本轮未重跑产品全量测试，未改产品源码、未提交/推送。
+
+## 测试产物清理（2026-11-02）
+
+- 用户报告手工测试结束并明确要求删除测试项目/文件。先核对目录内容、历史记录、服务进程、绝对路径与链接，再清理；未泛化删除用户目录或其他项目。
+- Ubuntu：正常停止已核验PID4817的测试服务；删除`ChunkHarbor-verify-20261030`（干净的旧M1测试副本）、`chunkharbor-m3-accept-h4oJyukB`、`ChunkHarbor-gui-test-local-BHyJwFs2`及/tmp下三个chunkharbor-gui-manual测试数据根。`ChunkHarbor-m3-verify`测试源码和build/build-asan/build-release已清理，仅保留仍被构建文档引用的`deps`（SQLite开发依赖）。正式ChunkHarbor、MiniLogDB及Git bundle/tar备份保留，事后检查通过。
+- Windows：正常关闭测试GUI；已将专用源目录、M3验收源、四个M5自动验收目录、review-begin-upload目录共七个目录，以及三个临时探针/截图文件、两个失效远程路径记录文件移入回收站。事后检查匹配的Temp测试目录已不存在；正式源码和cmake-build-windows-gui可执行文件仍存在。QSettings中已清除指向本次测试源目录的失效directory值。
+- 限制：Windows批量永久删除被自动安全审核拒绝（仅返回blocked by policy），改为可恢复回收站后上述测试文件清理成功。`%LOCALAPPDATA%/ChunkHarbor/chunkharbor-gui`测试历史/日志/会话目录回收时出现UnauthorizedAccess，保留原ACL，不绕过权限；该目录仍需用户在资源管理器手动删除，已在交付中明确说明。
+- 本轮仅清理与文档更新，未运行产品编译/功能测试，不改变M5历史验收结果，不提交/推送。
+
+## 手工上传测试准备：GitHub连接失败（2026-11-02）
+
+- 用户git clone遇到github.com:443连接被拒绝。未推断具体代理/防火墙原因，保留原Ubuntu工程及修改，不调整网络配置。
+- 通过Windows本地源码打包并经现有SSH传到新建目录`/home/ning/ChunkHarbor-gui-test-local-BHyJwFs2`，仅包含源码/头/构建/测试/第三方文件，不包含.git、用户数据或构建产物。
+- 新目录Debug服务端+CLI配置/构建成功，GUI/TESTS关闭，复用既有SQLite/OpenSSL开发头和系统库，不安装系统软件。`chunkharbor-server --help`成功；独立临时数据根实际CLI preview返回Added/0发送块，backup返回BACKUP OK/1块，原文件和正式文件一致，SHA256为ab321384f5765706e9117c1e145313791a7030f8fae12ad8e43069fde15d22d3。
+- 冒烟服务已停止；8787由用户按手册启动。未重跑全量CTest或Windows GUI端到端，不将此前M5完整验收当作本轮重跑。Windows源码未修改，保留原工作区，不提交/推送。
+
+## M5真实GUI集成与验收（2026-11-02）
+
+- TransferController + TaskModel + BackupWorker接入实际目录、源快照、服务端分页差异计划和runDelta上传。后台独占Socket/文件句柄，queued回GUI；安全暂停/取消、关窗协作退出、丢失提交回执恢复、配置/摘要/基线绑定、真实ACK进度和10000条目上限。
+- 六页真实数据：总览状态联动；备份预览/上传；文件/版本显示本机成功提交记录；日志持久化/筛选/导出；QSettings保存端口、块大小、续传、排除、启动页和日志目录。恢复/认证留给M6/M7并禁用；并行1、SHA256、浅色为固定能力。
+- Windows Qt6.8.3/MinGW13.1/Ninja构建成功，完整CTest18/18通过；Ubuntu独立目录/tmp/chunkharbor-m5-HZIF3EXX当前CMake GUI=OFF配置/构建，Debug44/44通过。真实Windows Widgets/Controller经SSH到Ubuntu：首次/0块/1块、中文名/空文件/排除、源变化/外部基线保护、Windows进程kill+服务端SIGKILL恢复、暂停取消与Resume、优雅关窗重开，均通过且SHA256一致。
+- 六页截图检查后调整备份布局，默认窗口完整显示任务操作。Fake TCP覆盖严格request_id、恶意plan session/base、full→resume、COMMITTED本地回执丢失、状态写失败/源消失/取消；本机记录UTF8和64位精度、设置及页面联动有回归。
+- 真实联调暴露request_id回退，修复独立连接后通过；另修复可信计划绑定、模式继承、进度分母、端点在线状态、非法1MiB块选项、条目上限和probe设置污染。并发exe占用、上限测试无效配置等失败已记录。最终独立审阅未发现新Important问题。
+- 线程/文件映射见GUI_DESIGN.md，命令结果见M5_VALIDATION.md，CLion/SSH和专用目录手工指令见BUILD_WINDOWS.md。Linux GUI/MSVC/新增GUI Sanitizer/Release及性能实验未执行。
+- 保留前轮未提交UI，分支codex/m5-gui，未提交/推送。下一最小任务：M6受限分页文件列表及恢复协议，先完成单文件临时下载+SHA256校验发布闭环。
+
+## GUI完成度审查（开发前快照，2026-11-02）
+
+- 已核对页面、MainWindow、QtTcpTransport、DemoData、GUI测试和开发指南：六页框架、中文样式、目录选择、示例筛选/导出及模拟进度已实现；真实业务仅接入HELLO握手。M5尚未完成。
+- 纯界面缺项：FilesPage仍为占位，缺少搜索/筛选/文件表格/详情；Settings仅有loopback地址、端口和检查连接，备份参数、外观/启动页/日志目录及设置持久化未实现。地址只读是当前SSH隧道开发约束，不作为缺陷。
+- Dashboard统计、最近任务及活动仍为空状态；连接卡片固定为“尚未检查”，没有订阅顶部的真实连接状态，存在跨页面状态不一致。
+- Backup使用DemoData和QTimer，没有真实扫描/哈希/差异计划/上传、真实速度与确认进度、暂停取消重试、持久会话恢复；Versions使用固定种子摘要和示例历史，恢复禁用；Logs筛选/导出真实可操作，但来源仍是五条内存示例日志。
+- 集成缺项：TransferController、真实任务/预览模型、后台扫描与哈希、Qt线程适配、错误和进度事件、关闭/重开续传及GUI到Ubuntu端到端验收。client_core已有DirectoryScanner、SourceSnapshot与同步runDelta，可复用；同步驱动不能直接放在GUI线程，也不能让工作线程直接操作GUI线程的QTcpSocket。
+- 文件/历史浏览还需服务端分页查询协议与实现，不能仅将示例数据换成数据库读取。下载恢复属M6；TLS/认证、正式打包部署属M7；当前已有windeployqt开发依赖部署，不等于M7完成。定时备份、版本保留/GC等仍为后续P1功能。
+- 本轮Windows Qt6.8.3/MinGW13.1实际执行：`cmake --build build-windows-gui -j 2`成功（ninja无待编译项）；`ctest --test-dir build-windows-gui --output-on-failure`，16/16通过。仅证明现有演示/握手及共享模块回归通过；本轮未运行Ubuntu、GUI真实上传/续传/恢复、MSVC、Linux GUI或性能实验。
+- 下一最小任务建议：先接入后台真实目录扫描及预览模型，以专用测试目录验证中文路径、排除项、错误与取消；随后接入服务端差异预览与真实备份。首页连接卡片可单独修复。当前GUI相关改动仍有未提交文件。
+
+## GUI简体中文（2026-11-01）
+
+- 六页导航/标题/按钮/表头/提示/空状态/无障碍名称及示例数据、日志导出内容、模拟进度、连接状态和错误已中文化；保留品牌、协议及稳定命令行参数。模型判断和测试同步更新为中文，避免翻译破坏筛选/状态配色。
+- 设置中文QLocale，当前Qt Kit的qtbase_zh_CN.qm通过资源嵌入加载，支持Qt标准控件中文；样式优先微软雅黑UI。MSVC目标增加UTF-8源编码选项，其他平台不引入新依赖。
+- 实际Windows Qt6.8.3/MinGW13.1：build-windows-gui构建、完整CTest16/16通过，涵盖中文演示流程/筛选/版本选择与七类握手场景；六页截图检查。Linux GUI/MSVC未验证，不宣称已完成真实GUI备份。详细说明见GUI_DESIGN.md。未提交/推送。
+
+## M5第二轮静态UI（2026-11-01）
+
+- 新增集中DemoData及TableKit，细化三个页面和InfoCard副标题；QStandardItemModel承载示例数据。Backup具备配置、四类变化预览和完整模拟阶段/暂停/取消/重试；Versions双栏和详情联动；Logs组合过滤及用户触发的原子示例导出。
+- 所有示例明确标注Demo/Sample，不发起备份、不扫描目录、不更改顶部真实连接状态。恢复按钮禁用。定时器与模型由Qt父对象持有，MainWindow没有增加业务处理。
+- Windows Qt6.8.3/MinGW13.1：实际build-windows-gui配置自动重生成、构建、完整CTest最终16/16通过；新增页面行为检查，原有握手七场景回归。三页真实截图检查后压缩Backup卡片内边距，使默认窗口完整显示进度区；小窗口仍可滚动。
+- 编写脚本初次读取UTF-8文件使用默认GBK而中断，显式UTF-8后完成；新增计时回归初稿断言顺序错误导致一次测试失败，调整顺序后全量通过，没有将失败记为成功。
+- 文档及文件映射见docs/GUI_DESIGN.md；未执行Linux GUI/MSVC/GUI备份端到端。没有提交/推送。下一最小任务建议：先确定真实任务模型和TransferController与现有client_core的线程适配，再接入扫描/预览。
+
+## M5第一轮UI骨架（2026-11-01）
+
+- 运行依赖修复：新增默认OFF的Windows GUI `CHUNKHARBOR_DEPLOY_GUI`开关，开启后POST_BUILD调用当前Qt的windeployqt复制DLL/插件/编译器运行库。已配置开启、构建成功，Qt GUI CTest15/15通过；清理Qt环境变量且PATH只保留Windows/System32、独立临时cwd启动截图退出0。Linux/MSVC部署未验证，不代表正式打包。用户在CLion CMake选项加`-DCHUNKHARBOR_DEPLOY_GUI=ON`后重新构建即可。未提交/推送。
+- 首次部署后headless握手测试因未复制qoffscreen插件超时；BUILD_TESTS启用时补充复制该测试插件后，完整15/15通过。隔离运行探针首次取环境变量时因SYSTEMROOT大小写失败，修正探针后实际启动退出0且截图存在；此前失败不计成功。
+
+- 按用户明确范围实现MainWindow布局、图标+文字侧栏、顶部连接状态/地址/刷新/设置、六个独立页面、WorkspacePage及InfoCard、资源打包Light.qss。Dashboard仅空状态卡片，其余业务页保留布局空壳。
+- 保留QtTcpTransport和probe-port真实异步握手；普通启动Offline，不自动伪造Online或备份数据。所有控件由Qt父子生命周期管理，未新增工作线程/阻塞I/O。
+- 实际Windows Qt6.8.3/MinGW13.1/Ninja：cmake --build build-windows-gui -j 2，CTest 15/15通过（gui_probe含7握手场景）；Dashboard/Settings截图检查及其余页面启动检查。首轮截图发现Windows暗色palette透入内容区，显式浅色palette和StyledBackground修复后重新构建验证。
+- 文件结构和命令见docs/GUI_DESIGN.md。未执行Linux GUI/MSVC/GUI备份端到端；没有宣称M5全部完成。未提交/推送。
+- 下一最小任务：Backup页配置/扫描预览/任务进度的静态UI与数据模型设计，再逐步接真实核心。
 
 ## M4全阶段完成与最终验证（2026-11-01）
 
