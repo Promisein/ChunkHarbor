@@ -1,9 +1,11 @@
 # ChunkHarbor 开发进度
 
-## M6发布与Ubuntu原工程同步准备（2026-11-02）
+## M6发布与Ubuntu原工程同步完成（2026-11-02）
 
 - 用户明确授权提交/推送GitHub并同步Ubuntu原项目；范围为已有M6分页、Linux下载、GUI文件列表及重扫/布局修复，不宣称M6全阶段完成。新增忽略`tests/testFiles`，不发布用户照片/ZIP、SDK、构建产物或备份数据。
-- 发布前核对GitHub main与本地基线一致；Ubuntu工作区去除CRLF差异后，没有独有源码，仅缺最新GUI修复及测试文档。归档和最终同步/构建结果以UBUNTU_SYNC.md及本轮实际工具输出为准，不将准备动作当作推送成功。
+- 功能提交`b6b62ab`已推送GitHub main，并通过Git bundle导入Ubuntu原项目后快进同步，不创建新源码目录。Ubuntu同步前的M6工作区保存于原仓库stash，242个文件归档内容按LF规范化SHA-256逐项核验，原M2归档保留。
+- 本轮Windows原build构建成功、完整CTest22/22通过；Ubuntu原build仅重建server/CLI目标，文件列表和下载恢复两项真实集成测试通过，未重建此前清理的测试可执行文件。Linux50项全量、Release/Sanitizer及Windows真实SSH全流程未在本发布轮重跑，不以历史结果代替。
+- 发布不包含tests/testFiles照片/ZIP或备份数据；未重启用户正在使用的服务，保留原build/deps和配置。上传模式含义已写入BUILD_WINDOWS.md。最终文档提交与三端一致性以Git核对结果为准。
 
 ## 中断重扫与最大化布局修复（2026-11-02）
 

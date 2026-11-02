@@ -1,5 +1,23 @@
 # Ubuntu主工程同步（2026-11-02）
 
+## 最新：M6已发布GitHub并以Git提交同步（2026-11-02）
+
+用户明确授权发布。功能提交`b6b62ab`（M6分页、Linux下载、GUI文件列表、重扫/布局修复）已推送GitHub main；Ubuntu原`/home/ning/ChunkHarbor`用Git bundle导入对象并执行`git merge --ff-only origin/main`，不是无版本覆盖源码。后续文档提交同样快进同步，三端以最终HEAD核对为准。原工程日常入口和build目录不变。
+
+同步前Ubuntu工作区去除CRLF差异后没有独有代码；仍完整stash归档，名称`archive Ubuntu pre-publication M6 working tree 2026-11-02`。逐个读取stash树/第三父树中的文件，与同步前规范化SHA-256核对，242个文件一致。此前M2 stash仍保留。同步前原始字节哈希审计在`.git/codex-pre-m6-publish-audit.json`，不会上传GitHub。
+
+发布前Windows实际构建与完整CTest22/22通过。Ubuntu原build执行`cmake --build build --target chunkharbor-server chunkharbor-cli -j 2`成功；以下两项真实回归均通过：
+
+```bash
+cd /home/ning/ChunkHarbor
+python3 tests/integration/files_list_test.py ./build/chunkharbor-server ./build/chunkharbor-cli
+python3 tests/integration/download_test.py ./build/chunkharbor-server ./build/chunkharbor-cli
+```
+
+构建日志`build/m6-publish-build.log`。未重跑Linux全量50项，不重新生成用户此前清理的单测程序；未重启常驻服务，不触碰exchangeFiles备份数据。不上传Windows测试照片/ZIP；`tests/testFiles`已加入.gitignore。旧文档中“未提交/未推送”的描述属于当时历史，当前M6已发布。
+
+以下各节保留此前源码同步历史。
+
 ## 最新：M6同步到原工程（2026-11-02）
 
 按用户要求，后续默认在`/home/ning/ChunkHarbor`增量构建与使用，不再为每轮验证创建新的源码工程目录。原`build`和依赖缓存继续复用；备份数据应单独存放，不能把源码目录当服务端存储根。
