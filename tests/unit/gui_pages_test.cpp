@@ -12,6 +12,9 @@
 #include "pages/VersionsPage.h"
 #include <QApplication>
 #include <QComboBox>
+#include <QDir>
+#include <QEventLoop>
+#include <QFile>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -21,6 +24,7 @@
 #include <QStandardItemModel>
 #include <QTemporaryDir>
 #include <QTableView>
+#include <QTimer>
 #include <iostream>
 #include <stdexcept>
 void check(bool v, const char *m) {
@@ -40,6 +44,34 @@ int main(int argc, char **argv) {
         TransferController controller(&store);
         SettingsPage settings;
         BackupPage backup(&controller, &settings);
+        auto *backupMode = backup.findChild<QComboBox *>("backupMode");
+        check(backupMode && backupMode->count() == 4 && backupMode->currentData() == "auto",
+              "new workspace defaults to auto with all manual modes retained");
+        for (const auto &manual : {"full", "resume", "incremental"}) {
+            QSettings().setValue("task/mode", manual);
+            BackupPage legacy(&controller, &settings);
+            check(legacy.findChild<QComboBox *>("backupMode")->currentData() == manual,
+                  "saved manual mode remains compatible");
+        }
+        QSettings().remove("task/mode");
+        {
+            WorkspaceStore failedStore(temp.filePath("failed-scan"));
+            TransferController failedScan(&failedStore);
+            gui::BackupConfig config;
+            config.directory = temp.filePath("failed-source");
+            check(QDir().mkpath(config.directory + "/build") && QDir().mkpath(failedScan.stateDirectory()),
+                  "create isolated global-error fixture");
+            QFile bad(failedScan.stateDirectory() + "/unassociated.json");
+            check(bad.open(QIODevice::WriteOnly), "create malformed unassociated checkpoint");
+            bad.write("{broken"); bad.close();
+            QEventLoop loop;
+            QObject::connect(&failedScan, &TransferController::finished, &loop, &QEventLoop::quit);
+            QTimer::singleShot(3000, &loop, &QEventLoop::quit);
+            failedScan.scan(config);
+            loop.exec();
+            check(!failedScan.busy() && !failedScan.hasPreview() && failedScan.recommendation().contains("核验失败"),
+                  "global failure with excluded rows must not advertise a confirmed auto plan");
+        }
         check(controller.previewModel()->rowCount() == 0, "no fake preview entries");
         auto *start = backup.findChild<QPushButton *>("backupStart");
         check(start && !start->isEnabled(), "no upload before a preview");
@@ -53,11 +85,8 @@ int main(int argc, char **argv) {
                   "all offered chunk sizes fit wire payload including chunk header");
         QtTcpTransport transport;
         DashboardPage dashboard(&controller, &store, &transport);
-        transport.ready();
         auto *connection = dashboard.findChild<QLabel *>("dashboardMetric0");
-        check(connection->text() == "在线", "dashboard follows real transport signal");
-        transport.failed();
-        check(connection->text() == "离线", "dashboard failure state");
+        check(connection->text() == "未检查", "dashboard does not invent a connection result");
         FileListController fileList;
         FilesPage files(&fileList);
         VersionsPage versions(&store);
@@ -109,11 +138,10 @@ int main(int argc, char **argv) {
               "dashboard actual version count");
         QSettings().setValue("storage/logDirectory", temp.filePath("window-logs"));
         MainWindow window(nullptr, temp.filePath("window"));
-        window.transport()->ready();
         auto *badge = window.findChild<QLabel *>("connectionBadge");
-        check(badge->text() == "在线", "topbar connected");
+        check(badge->text() == "未检查", "topbar starts unchecked");
         window.findChild<QSpinBox *>("serverPort")->setValue(34567);
-        check(badge->text() == "离线", "endpoint edit invalidates old online state");
+        check(badge->text() == "未检查", "endpoint edit requires a new check");
         std::cout << "real empty states, settings persistence, history, logs and connection "
                      "binding passed\n";
     } catch (const std::exception &e) {

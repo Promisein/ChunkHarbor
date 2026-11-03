@@ -32,11 +32,12 @@ BackupPage::BackupPage(TransferController *controller, SettingsPage *settings, Q
     auto *browse = new QPushButton(tr("浏览…"), config);
     auto *mode = new ui::ComboBox(config);
     mode->setObjectName("backupMode");
+    mode->addItem(tr("自动备份（推荐）"), "auto");
     mode->addItem(tr("首次完整上传"), "full");
     mode->addItem(tr("断点续传"), "resume");
     mode->addItem(tr("增量备份"), "incremental");
-    mode->setCurrentIndex(qMax(0, mode->findData(prefs.value("task/mode", "incremental"))));
-    mode->setToolTip(tr("首次上传拒绝已有目标；增量备份复用旧块；断点续传恢复本机保存的会话。"));
+    mode->setCurrentIndex(qMax(0, mode->findData(prefs.value("task/mode", "auto"))));
+    mode->setToolTip(tr("自动备份按文件选择首次、增量、续传或跳过；手动模式保留严格校验。"));
     auto *scan = new QPushButton(tr("扫描并预览"), config);
     scan->setObjectName("backupScan");
     auto *start = new QPushButton(tr("开始备份"), config);
@@ -64,6 +65,9 @@ BackupPage::BackupPage(TransferController *controller, SettingsPage *settings, Q
     table->setAlternatingRowColors(true);
     table->verticalHeader()->hide();
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    // Keep the four-character action labels readable with the existing QSS padding.
+    table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);
+    table->setColumnWidth(4, 112);
     table->horizontalHeader()->setStretchLastSection(true);
     table->verticalHeader()->setDefaultSectionSize(28);
     table->horizontalHeader()->setFixedHeight(30);
@@ -93,7 +97,7 @@ BackupPage::BackupPage(TransferController *controller, SettingsPage *settings, Q
     cancel->setObjectName("backupCancel");
     auto *retry = new QPushButton(tr("重试 / 恢复"), progress);
     retry->setObjectName("backupRetry");
-    retry->setToolTip(tr("按上次任务配置重试；如已更改配置，请重新扫描。"));
+    retry->setToolTip(tr("按上次配置重新扫描并核验会话；确认新预览后点击开始备份。"));
     pause->setToolTip(tr("在安全请求边界暂停，当前请求可能继续完成。"));
     cancel->setToolTip(tr("停止任务并保留已确认进度，供后续恢复。"));
     actions->addWidget(phase, 1);
@@ -136,8 +140,11 @@ BackupPage::BackupPage(TransferController *controller, SettingsPage *settings, Q
     retry->setEnabled(false);
     enable();
     auto invalidate = [=] {
-        if (!controller->busy())
+        if (!controller->busy()) {
+            controller->invalidatePreview();
             start->setEnabled(false);
+            retry->setEnabled(false);
+        }
     };
     connect(local, &QLineEdit::textChanged, this, [=](const QString &) { invalidate(); });
     connect(remote, &QLineEdit::textChanged, this, [=](const QString &) { invalidate(); });
@@ -194,7 +201,8 @@ BackupPage::BackupPage(TransferController *controller, SettingsPage *settings, Q
         });
     connect(controller, &TransferController::finished, this,
             [=](const QString &summary, bool success) {
-                phase->setText(summary);
+                phase->setText(!success && controller->hasPreview()
+                    ? summary + tr("；可确认备份已核验文件，错误文件不会执行。") : summary);
                 bar->setRange(0, 100);
                 if (success) {
                     bar->setValue(100);
@@ -213,7 +221,7 @@ BackupPage::BackupPage(TransferController *controller, SettingsPage *settings, Q
                 ++m;
             else if (r.change == "未变化")
                 ++u;
-            if (r.status == "错误")
+            if (r.status == "错误" || !r.modeAllowed)
                 ++e;
         }
         preview->setSubtitle(tr("%1 项　新增 %2　修改 %3　未变 %4　错误 %5")
@@ -221,10 +229,11 @@ BackupPage::BackupPage(TransferController *controller, SettingsPage *settings, Q
                                  .arg(n)
                                  .arg(m)
                                  .arg(u)
-                                 .arg(e));
+                                 .arg(e) + "\n" + controller->recommendation());
     };
     connect(controller->previewModel(), &QAbstractItemModel::dataChanged, this, [=] { summary(); });
     connect(controller->previewModel(), &QAbstractItemModel::rowsInserted, this,
             [=] { summary(); });
     connect(controller->previewModel(), &QAbstractItemModel::modelReset, this, summary);
+    connect(controller, &TransferController::recommendationChanged, this, [=](const QString &) { summary(); });
 }

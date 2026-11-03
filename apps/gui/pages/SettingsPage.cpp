@@ -45,7 +45,8 @@ SettingsPage::SettingsPage(QWidget *parent)
         chunk_->addItem(QString::number(size / 1024) + " KiB", size);
     int index = chunk_->findData(p.value("backup/chunk", 262144).toInt());
     chunk_->setCurrentIndex(index < 0 ? 1 : index);
-    resume_ = new QCheckBox(tr("保留会话并恢复已确认进度"), backup);
+    resume_ = new QCheckBox(tr("首次/增量上传时自动续传匹配会话"), backup);
+    resume_->setToolTip(tr("此项仅控制手动首次/增量模式。自动备份和显式续传始终核验匹配会话；关闭此项不会删除检查点。"));
     resume_->setChecked(p.value("backup/resume", true).toBool());
     exclusions_ = new QLineEdit(p.value("backup/exclusions", ".git;build").toString(), backup);
     exclusions_->setToolTip(tr("目录名或相对路径，用分号分隔。"));

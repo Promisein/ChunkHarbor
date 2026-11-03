@@ -59,7 +59,11 @@ void TcpServer::timerReady() {
     const auto now = std::chrono::steady_clock::now();
     std::vector<TcpConnection::Ptr> expired;
     for (const auto& pair : connections_)
-        if (now - pair.second->lastActivity() >= idleTimeout_) expired.push_back(pair.second);
+        // A disk job may be queued or synchronizing a block while reads are
+        // deliberately paused. No network traffic is expected until it completes.
+        // Output high-water backpressure alone does not suspend idle expiry.
+        if (!pair.second->idleTimeoutSuspended() &&
+            now - pair.second->lastActivity() >= idleTimeout_) expired.push_back(pair.second);
     for (const auto& connection : expired) connection->close();
 }
 void TcpServer::stop() {

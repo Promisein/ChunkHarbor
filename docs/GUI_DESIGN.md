@@ -1,5 +1,17 @@
 # M5 Windows Widgets客户端
 
+## R1 自动备份与文件级计划（2026-11-03）
+
+新增默认auto，旧保存的手动选择保留。目录配置仍由BackupConfig负责，现有FileRecord新增内存BackupStrategy承载Full/Incremental/Resume/Skip/Error，与证据分类BackupAdvice分离。TaskModel新增执行策略列；原预览说明显示分类、错误及预计传输量。完整扫描后auto允许用户确认安全行，错误pin固定为不可执行；取消/全局失败不能授权。正式执行逐文件复核源摘要、会话ID/状态与固定基线，续传额外用Preview验证当前基线；重试只重新规划，仍由用户确认。检查点维持旧full/incremental语义，无协议/schema/历史迁移。规则、测试与风险见 [R1_AUTO_BACKUP](R1_AUTO_BACKUP.md)，以下手动规则及M历史保留。
+
+## R1 备份模式与扫描建议（2026-11-03）
+
+备份页根据真实服务器版本/差异计划、匹配的本机检查点及QUERY_DELTA会话给出分类建议。显式resume无会话拒绝；full保护已有目标；incremental保留匹配会话自动续传。无变化文件使用固定版本重新核验后跳过，不提交新版本。控制器在模式/配置变化以及正式任务结束时清空预览资格；重试先重扫，用户确认后开始。仅增加内存分类字段和通知，不改持久格式、协议、线程归属及其他页面布局。完整规则、失败记录及验证边界见 [R1_BACKUP_MODES](R1_BACKUP_MODES.md)。下方M5原始行为描述为历史。
+
+## R1 可达性检查（2026-11-03）
+
+顶部和总览改用同一显式HealthState：未检查/检查中/可达/不可达。用户首次检查后，每次独立HELLO短连接，完成15秒后复查，单次5秒超时；正常关闭探测连接不判离线。端点修改停止旧检查并要求重新检查；列表请求和上传连接保持独立。设计、知识点、失败复现及验证边界见 [R1_GUI_HEALTH](R1_GUI_HEALTH.md)。下方旧阶段Online/Offline记录为历史。
+
 ## M6服务端文件分页（2026-11-02）
 
 文件页已切换为真实服务端当前文件，版本历史页仍为本机记录。新增ServerFilesModel（QAbstractTableModel）与FileListController，复用QtTcpTransport新增的异步请求模式；每页独立协商file_list_v1，单次在途请求，5秒握手/10秒响应、64KiB接收界限。控制器检查页大小、顺序与游标，成功才替换当前页；失败保留并标注上次结果，取消/端点切换中止旧连接，端点变化清空模型。所有socket/model/timer归Qt事件线程，无阻塞磁盘/网络等待。

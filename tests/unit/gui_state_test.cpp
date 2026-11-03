@@ -24,10 +24,12 @@ int main(int argc, char **argv) {
         a.status = "已提交";
         a.change = "新增";
         a.endpoint = "127.0.0.1:18787";
+        a.strategy = gui::BackupStrategy::Resume;
         a.time = "2026-11-02T01:02:03Z";
         TaskModel tasks;
         tasks.upsert(a);
-        check(tasks.rowCount() == 1 && tasks.columnCount() == 5, "task geometry");
+        check(tasks.rowCount() == 1 && tasks.columnCount() == 6, "task geometry includes execution strategy");
+        check(tasks.data(tasks.index(0, 4)).toString() == "断点续传", "display confirmed file action");
         auto b = a;
         b.status = "失败";
         tasks.upsert(b);

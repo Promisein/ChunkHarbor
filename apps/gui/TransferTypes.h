@@ -14,14 +14,20 @@ struct BackupConfig {
     QString directory, prefix, stateDirectory;
     quint16 port = 18787;
     quint32 chunkSize = 262144;
-    QString mode = "incremental";
+    QString mode = "auto";
     QStringList exclusions = {".git", "build"};
-    bool resume = true;
+    bool resume = true; // Auto/resume always validate sessions; this switch controls manual full/incremental.
 };
+enum class BackupAdvice { Unknown, Full, Incremental, Resume, Unchanged };
+enum class BackupStrategy { Error, Full, Incremental, Resume, Skip };
 struct FileRecord {
     QString localPath, logicalPath, status, change, note, sha256, versionId, baseVersion, time;
     QString endpoint;
     quint64 size = 0, missingBytes = 0, changedBlocks = 0;
+    BackupAdvice advice = BackupAdvice::Unknown; // Ephemeral, derived from live server evidence.
+    bool modeAllowed = true;
+    QString resumeSession;
+    BackupStrategy strategy = BackupStrategy::Error; // Confirmed action, never persisted as a receipt.
 };
 struct TransferProgress {
     QString file, phase;
@@ -54,10 +60,13 @@ struct WorkerCallbacks {
 struct RunResult {
     int succeeded = 0, failed = 0, skipped = 0;
     bool cancelled = false;
+    bool planComplete = false; // A complete scan may contain isolated file errors.
 };
 RunResult runBackup(const BackupConfig &, bool preview, const QList<FileRecord> &pinned,
                     RunControl &, const WorkerCallbacks &);
 QString formatBytes(quint64 bytes);
+QString modeRecommendation(const QList<FileRecord> &, bool automatic = false);
+QString strategyName(BackupStrategy);
 } // namespace gui
 Q_DECLARE_METATYPE(gui::FileRecord)
 Q_DECLARE_METATYPE(gui::TransferProgress)

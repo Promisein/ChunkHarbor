@@ -123,9 +123,9 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
     title->setFont(f);
     top->addWidget(title);
     top->addStretch();
-    auto *badge = new QLabel(tr("离线"), bar);
+    auto *badge = new QLabel(tr("未检查"), bar);
     badge->setObjectName("connectionBadge");
-    badge->setToolTip(tr("尚未建立连接，点击刷新检查服务器握手。"));
+    badge->setToolTip(tr("尚未检查；点击刷新后每 15 秒使用独立 HELLO 检查服务器。"));
     top->addWidget(badge);
     auto *address = new QLabel(bar);
     address->setProperty("role", "muted");
@@ -191,16 +191,11 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
     connect(transport_, &QtTcpTransport::statusChanged, this, [this, badge](const QString &text) {
         store_->appendLog("信息", text);
         settings_->status->setText(text);
-        badge->setText(tr("离线"));
-        badge->setProperty("online", false);
         badge->setToolTip(text);
-        badge->style()->unpolish(badge);
-        badge->style()->polish(badge);
     });
-    connect(transport_, &QtTcpTransport::ready, this, [badge] {
-        badge->setText(QObject::tr("在线"));
-        badge->setProperty("online", true);
-        badge->setToolTip(QObject::tr("连接检测握手成功；备份任务独立建立并校验传输连接。"));
+    connect(transport_, &QtTcpTransport::healthChanged, this, [this, badge] {
+        badge->setText(transport_->healthStateText());
+        badge->setProperty("online", transport_->healthState() == QtTcpTransport::HealthState::Reachable);
         badge->style()->unpolish(badge);
         badge->style()->polish(badge);
     });

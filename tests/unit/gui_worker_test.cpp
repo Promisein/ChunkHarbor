@@ -33,7 +33,7 @@ class FakeServer {
 
   public:
     quint16 port = 0;
-    std::atomic_bool failBlock{false}, wrongId{false};
+    std::atomic_bool failBlock{false}, wrongId{false}, rejectPreviewBaseline{false};
     std::atomic_int blocks{0}, queries{0}, evilPlan{0};
     FakeServer() {
         std::promise<quint16> ready;
@@ -94,7 +94,10 @@ class FakeServer {
                             QByteArray(reinterpret_cast<char *>(id.data()), 16).toHex())] = {begin,
                                                                                              false};
                         r.type = 25;
-                        r.payload = encodeDeltaReady({id, std::nullopt, 1});
+                        std::optional<VersionId> readyBase;
+                        if (begin.mode == DeltaMode::Preview && rejectPreviewBaseline.exchange(false))
+                            readyBase = VersionId{};
+                        r.payload = encodeDeltaReady({id, readyBase, 1});
                     } else if (q.type == 18) {
                         auto p = decodeManifestPage(q.payload);
                         r.type = 26;
@@ -232,6 +235,7 @@ int main(int argc, char **argv) {
             std::cerr << "limit: failed=" << r.failed << " success=" << r.succeeded
                       << " error=" << lastError.toUtf8().constData() << '\n';
         check(r.failed == 1 && r.succeeded == 0 && lastError.contains("10000"));
+        check(!r.planComplete);
         // Chinese source name and separate private state; one block is 3 bytes.
         QDir().mkpath(dir.path() + "/source");
         QFile source(dir.path() + "/source/中文.txt");
@@ -243,6 +247,27 @@ int main(int argc, char **argv) {
         c.chunkSize = 262144;
         c.port = server.port;
         c.mode = "full";
+        {
+            auto automatic = c;
+            automatic.stateDirectory = dir.path() + "/auto-session";
+            automatic.mode = "auto";
+            automatic.resume = false;
+            QList<gui::FileRecord> automaticRows;
+            auto automaticCallbacks = cb;
+            automaticCallbacks.entry = [&](const auto &e) { automaticRows.append(e); };
+            const auto planned = gui::runBackup(automatic, true, {}, other, automaticCallbacks);
+            if (planned.failed || planned.succeeded != 1 || automaticRows.last().advice != gui::BackupAdvice::Full)
+                throw std::runtime_error("auto must plan a new file as full, independent of the manual resume switch");
+        }
+        {
+            auto explicitResume = c;
+            explicitResume.stateDirectory = dir.path() + "/no-session";
+            explicitResume.mode = "resume";
+            explicitResume.resume = false;
+            const auto rejected = gui::runBackup(explicitResume, true, {}, other, cb);
+            if (rejected.failed != 1 || rejected.succeeded != 0)
+                throw std::runtime_error("explicit resume without a checkpoint must not silently preview a new upload");
+        }
         QList<gui::FileRecord> pins;
         cb.entry = [&](const gui::FileRecord &e) { pins.append(e); };
         r = gui::runBackup(c, true, {}, other, cb);
@@ -260,16 +285,32 @@ int main(int argc, char **argv) {
         r = gui::runBackup(c, true, {}, other, cb);
         check(r.failed > 0 && server.queries == 0);
         check(QFile::rename(renamed, source.fileName()));
+        {
+            auto automatic = c;
+            automatic.mode = "auto";
+            automatic.resume = false;
+            QList<gui::FileRecord> autoPins;
+            auto callbacks = cb;
+            callbacks.entry = [&](const auto &e) { autoPins.append(e); };
+            auto planned = gui::runBackup(automatic, true, {}, other, callbacks);
+            check(!planned.failed && planned.planComplete && autoPins.last().strategy == gui::BackupStrategy::Resume);
+            const auto pinned = autoPins;
+            server.rejectPreviewBaseline = true;
+            auto rejected = gui::runBackup(automatic, false, pinned, other, callbacks);
+            check(rejected.failed == 1 && server.blocks == 0 &&
+                  autoPins.last().strategy == gui::BackupStrategy::Error && autoPins.last().versionId.isEmpty());
+        }
         c.mode = "resume";
         r = gui::runBackup(c, false, original, other, cb);
-        check(r.failed == 0 && r.succeeded == 1 && server.blocks == 1 && server.queries == 1 &&
+        check(r.failed == 0 && r.succeeded == 1 && server.blocks == 1 && server.queries >= 1 &&
+              uploaded.last().advice == gui::BackupAdvice::Resume &&
               uploaded.last().versionId.size() == 32 && uploaded.last().change == "新增" &&
               uploaded.last().changedBlocks == 1 && lastProgress.totalBytes == 3 &&
               lastProgress.acknowledgedBytes == 3);
         r = gui::runBackup(c, false, original, other, cb);
-        check(!r.failed && server.blocks == 1 && server.queries == 2 &&
-              uploaded.last().change == "新增" && uploaded.last().changedBlocks == 1 &&
-              lastProgress.totalBytes == 0 && lastProgress.acknowledgedBytes == 0);
+        // This minimal peer reports no current version even after COMMITTED.
+        // Explicit Resume must not silently start a replacement upload.
+        check(r.failed == 1 && server.blocks == 1 && uploaded.last().versionId.isEmpty());
         const auto stateNames = QDir(c.stateDirectory).entryList({"*.json"}, QDir::Files);
         check(stateNames.size() == 1);
         QFile state(c.stateDirectory + "/" + stateNames.first());
@@ -284,7 +325,7 @@ int main(int argc, char **argv) {
         check(state.open(QIODevice::WriteOnly | QIODevice::Truncate));
         state.write(QJsonDocument(saved).toJson());
         state.close();
-        c.mode = "resume";
+        c.mode = "incremental";
         uploaded.clear();
         r = gui::runBackup(c, true, {}, other, cb);
         check(!r.failed && uploaded.size() == 2 && !uploaded.first().versionId.isEmpty() &&

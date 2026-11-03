@@ -1,10 +1,31 @@
 # ChunkHarbor
 
+后续开发需求已冻结，采用 [R1–R8 路线图](docs/ROADMAP_V3.md)：单用户可靠性 → 单服务器多用户隔离 → 性能与规模验证。M0–M7 保留为原始历史编号。当前源码、跨机器版本及验证边界见 [2026-11-03 审计](docs/PROJECT_AUDIT_2026-11-03.md)，每轮状态见 [PROGRESS 顶部](docs/PROGRESS.md)。
+
+R1已于2026-11-03按用户确认完成，当前进入R1发布与跨平台同步；R2尚未启动。最新提交、同步和验证记录见 [PROGRESS](docs/PROGRESS.md) 与 [Ubuntu同步记录](docs/UBUNTU_SYNC.md)。
+
 C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。M6已支持Linux CLI单文件下载校验恢复；GUI恢复、TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
 
 M4使用、详细人工复现及自动恢复测试见[M4使用](docs/M4_USAGE.md)；真实构建/测试证据见[M4验证](docs/M4_VALIDATION.md)。旧`upload`命令保持首次上传/已有目标拒绝的语义；重复增量备份使用`backup`。版本对象与最新副本分别存储，尚无历史版本GC或总空间配额。
 
 Windows中文GUI提供总览、备份、文件、版本、日志、设置六页：后台扫描/哈希、服务端差异预览、真实确认进度、暂停/取消/恢复、本机提交历史、日志筛选导出和设置持久化。文件页已接入服务端当前文件分页、翻页/取消及当前页筛选；版本历史页仍为本机提交记录，恢复按钮禁用。构建和详细操作见[Windows使用](docs/BUILD_WINDOWS.md)，线程与模块结构见[GUI设计](docs/GUI_DESIGN.md)，验收见[M5验证](docs/M5_VALIDATION.md)和[GUI列表验证](docs/M6_GUI_FILES_VALIDATION.md)。
+
+## R1：可靠备份与自动文件计划
+
+普通备份流程：选择本地目录与远端相对路径 → 使用“自动备份（推荐）”扫描 → 检查每个文件的执行策略和预计传输量 → 确认开始。新用户默认auto，已有手动偏好保留。
+
+| 模式 | 行为 |
+| --- | --- |
+| auto（推荐） | 每个文件独立选择首次上传、增量、有效会话续传或跳过；无法安全判断的文件标错，完整扫描后可确认执行其他安全文件 |
+| full | 首次上传，拒绝覆盖已有目标；本任务已完成且内容一致的文件可核验后跳过 |
+| resume | 严格核验本机检查点及服务端会话，无有效会话不静默开始新上传 |
+| incremental | 新文件上传，已有文件按固定索引块复用；无变化跳过；按设置复用匹配未完成会话 |
+
+执行前复核源SHA-256、服务器固定版本及续传会话；配置变化使预览失效。部分失败后“重试 / 恢复”先重新扫描，确认后再执行。损坏/不匹配的检查点保留，不自动删除状态；无变化不创建重复版本。详见 [自动备份设计与验证](docs/R1_AUTO_BACKUP.md)。
+
+R1同时修复了GUI健康探测连接正常关闭造成的离线误判、服务端磁盘工作期间误判空闲导致上传断开，以及下拉框圆角外的矩形底框。健康徽标仅表示最近HELLO可达，不代替上传成功或持久确认。
+
+验证采用Windows Qt构建、业务回归与真实Windows→SSH→Ubuntu上传/重启恢复矩阵。下拉框已由用户人工确认；原生自动输入测试的失败记录和人工验收例外保留，不宣称所有自动化全绿。单文件仍限制64MiB，仅可信loopback/SSH使用；GUI下载、服务端历史查询和目录快照归R2，TLS/认证及性能扩展按后续路线推进。
 
 ## 增量备份快速开始
 
@@ -24,7 +45,7 @@ printf 'first backup\n' > "$work/source.txt"
 
 ## Ubuntu 构建与验证
 
-Windows与Ubuntu使用同一完整Git仓库。Ubuntu保留`apps/gui`源码，通过`-DCHUNKHARBOR_BUILD_GUI=OFF`关闭GUI目标，无需Qt；Windows关闭SERVER、开启GUI。构建目录、SDK、测试照片和备份数据留在各自机器，不上传Git。最新M6已发布GitHub并以Git提交同步到Ubuntu原工程`/home/ning/ChunkHarbor`，以后直接在原工程增量构建使用。本发布轮Windows22/22通过，Ubuntuserver/CLI构建和列表/下载两项集成测试通过；Linux全量50/50属于先前验收。旧改动保存在原仓库Git stash中，详情见[Ubuntu同步记录](docs/UBUNTU_SYNC.md)。同步前仍应先检查`git status`，避免覆盖新的本地修改。
+Windows与Ubuntu使用同一完整Git仓库。Ubuntu保留`apps/gui`源码，通过`-DCHUNKHARBOR_BUILD_GUI=OFF`关闭GUI目标，无需Qt；Windows关闭SERVER、开启GUI。构建目录、SDK、测试照片和备份数据留在各自机器，不上传Git。Linux日常入口仍为原工程`/home/ning/ChunkHarbor`，复用原build及依赖；跨机同步使用Git提交和快进更新，先保存并核验目标工作区，不直接覆盖源码。发布轮真实构建/测试结果见PROGRESS顶部，旧M6结果保留在[Ubuntu同步记录](docs/UBUNTU_SYNC.md)中，不当作R1新测试。
 
 在 Ubuntu 的仓库根目录构建，无需 Qt。依赖 CMake 3.20+、GCC、Make、Python 3、OpenSSL 与 SQLite 开发包（Ubuntu `libssl-dev libsqlite3-dev`）；GDB 为可选调试工具。
 
@@ -86,7 +107,7 @@ cd /path/to/ChunkHarbor
 
 Echo 是独立测试模式：PING(16) 回 PONG(17)，DATA_CHUNK(5) 原样回显以测试大二进制帧；这些 payload 暂作不透明测试字节，不执行 JSON/文件块业务。其他合法但未实现的消息、非法头或超限长度会关闭连接；没有 HELLO/上传/认证语义。配置 JSON 仍只是样例，程序目前通过上述参数配置。
 
-服务端只绑定loopback；Windows可用 `ssh -N -L 18787:127.0.0.1:8787 miniob-ubuntu` 建立隧道，再使用Qt连接原型连接18787进行HELLO检测（服务端选handshake或upload模式）。普通文本客户端不能替代帧客户端，GUI原型不上传文件。
+服务端只绑定loopback；Windows可用 `ssh -N -L 18787:127.0.0.1:8787 miniob-ubuntu` 建立隧道，再使用Qt GUI连接18787进行HELLO检测（服务端选handshake或upload模式）。真实GUI备份须使用upload模式，操作见[Windows使用](docs/BUILD_WINDOWS.md)。普通文本客户端不能替代帧客户端；连接检测不代表备份任务已连接或成功。
 
 ## 自己调试
 
@@ -106,7 +127,7 @@ ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest 
 
 ## Windows 共享协议测试
 
-使用兼容 C++17 的编译器和 Ninja（加入 PATH），无需 Qt。Windows 默认关闭 Linux server/CLI。Qt Windows CLI 的构建与使用见 [M3 验收](docs/M3_VALIDATION.md)。以下构建纯C++协议与client_core，不代表Windows原生上传界面；Qt连接原型构建与SSH连接方法见M2_USAGE.md：
+使用兼容 C++17 的编译器和 Ninja（加入 PATH），无需 Qt。Windows 默认关闭 Linux server/CLI。Qt Windows CLI 的构建与使用见 [M3 验收](docs/M3_VALIDATION.md)。以下只构建纯C++协议与client_core；当前Qt GUI真实备份的构建及SSH连接方法见[Windows使用](docs/BUILD_WINDOWS.md)，M2_USAGE仅保留原型阶段历史：
 
 ```powershell
 cmake -S . -B build-windows-protocol -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_BUILD_SERVER=OFF -DCHUNKHARBOR_BUILD_CLI=OFF -DCHUNKHARBOR_BUILD_GUI=OFF

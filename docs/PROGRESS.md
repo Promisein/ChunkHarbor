@@ -1,5 +1,126 @@
 # ChunkHarbor 开发进度
 
+## R1 阶段完成并关闭（2026-11-03，用户确认验收）
+
+- **完成状态**：用户已自行验证下拉框，确认未发现实际交互故障，并明确要求结束R1剩余事项。结合前轮源码、构建、自动化与真实SSH证据，R1按当前约定范围完成；下方各轮“未验收/剩余”描述保留为当时历史，以本条最新状态为准。
+- **已交付**：独立GUI健康检查与可达性误判修复；磁盘工作期间误判空闲的上传断连修复；ComboBox圆角底框修复；严格手动模式与检查点保护；auto逐文件Full/Incremental/Resume/Skip/Error计划、分类统计和安全部分执行；配置/源/远端基线绑定、失效预览及重试重新确认。保持协议、历史、会话格式和串行架构。
+- **验收证据及例外**：前轮Windows构建成功，最新完整CTest实际为23/24，ComboBox原生自动输入专项仍失败；此记录不改为24/24。用户人工自测作为下拉框功能验收补充，按用户明确决定不再将该自动化输入问题作为R1阻塞项，不删除/禁用测试，也不认定失败必然由用户鼠标操作引起。业务模式、上传/崩溃恢复、A/B重扫三项真实SSH回归已有通过证据；服务端修复轮Linux51/51属于该轮证据，不冒充本轮新测。
+- **旧截图关闭**：按用户要求停止追查约10.9MiB照片的原始断连，不再作为R1待办；瞬时网络波动仅为可能解释，未将其写成已确认根因。已确认的空闲回收缺陷修复、隔离故障测试与安全恢复证据保留。
+- **本轮修改/验证**：仅整理PROGRESS、ROADMAP_V3、README及R1专项入口，不改业务/测试代码或用户数据。实际检查Git状态、既有测试记录、Markdown链接、文档差异及历史正文完整性；本轮不重新构建、不重跑CTest、不启动原生鼠标测试，沿用上述已标明轮次的证据。
+- **保留边界**：64MiB文件限制、可信loopback/SSH、无GUI恢复/鉴权等仍按后续阶段规划；Linux Qt/MSVC/Release/Sanitizer、硬件故障、长期压力及未提供的人工输入/DPI组合不补写为通过。跨机器同步、提交与发布不等于阶段功能验收，本轮未执行。
+- **停止点**：R1无继续开发的必做子任务。R2仍为规划中，待用户明确启动；不自动继续，不commit/push，保留所有既有未提交改动与M0–M7历史。
+
+## R1 自动备份与文件级策略计划实现完成（2026-11-03；GUI原生输入回归仍有失败）
+
+- **范围/流程**：本轮按用户新授权新增auto默认策略，不再要求混合目录统一手动模式。目录配置与进度由既有BackupConfig/TransferController管理，FileRecord新增内存BackupStrategy，逐文件Full/Incremental/Resume/Skip/Error，保持原串行worker及独立Peer。变更表新增执行策略列，原说明区显示准确分类、错误及预计上传量；没有并行/FastCDC/下载/认证/Redis/服务端重构。
+- **安全规则**：优先恢复本机身份匹配且QUERY确认的未完成会话；Absent→Full、已存在且变化→Incremental、Unchanged且缺失0→Skip。auto不受仅用于手动full/incremental的resume布尔开关关闭影响；显式resume仍必须有效会话。无效/损坏/源不匹配状态保留并标Error，本轮保守拒绝，不自动清空后重传。已提交回执丢失时核验真实COMMITTED结果恢复历史，再规划Skip，不误当未完成会话。
+- **预览权限/隔离**：新增RunResult::planComplete，仅完整扫描才可在auto下确认安全子集；Error pin执行时固定不上传，最终明确部分失败。全局预检错误、取消、目录集合变化不授权；补红测修正“已有排除行时全局失败仍展示可确认计划”的提示，按钮本来就禁用。模式/目录/前缀/设置变化仍清空预览，任务结束清空pins，重试先重扫再确认。执行复核源SHA/大小/路径、固定Absent/Exact及会话ID/状态；Resume额外进行固定基线Preview，错误时发送0数据块。不改变ACK/COMMIT持久性语义，Skip不创建重复版本。
+- **兼容/文件**：新用户默认auto，保存的full/resume/incremental不改写；auto新上传仍写旧full/incremental检查点语义，恢复旧会话保留其原模式。新增字段不进历史/检查点序列化，无协议/schema迁移。生产仅TransferTypes、BackupWorker、TransferController.cpp、TaskModel、BackupPage、SettingsPage；扩展worker/state/pages/layout单测、gui_transfer_probe及原windows_mode_ssh矩阵，未改本轮CMake、健康检查、ComboBox/QSS、共享库或服务端。新增[R1_AUTO_BACKUP](R1_AUTO_BACKUP.md)，更新BUILD_WINDOWS、GUI_DESIGN及前轮模式文档入口，完整旧轮记录保留。
+- **Windows构建/CTest实际结果**：Qt6.8.3/MinGW13.1/Ninja/Debug；`cmake -S . -B build-windows-gui`、`cmake --build build-windows-gui -j 2`成功。最终业务/提示代码的完整`ctest --test-dir build-windows-gui --output-on-failure` **23/24通过，110.63秒**（非性能指标）；仅`combo_popup_test`在`mouse opens actual popup`失败13.07秒，随后独立`-R '^combo_popup_test$'`仍0/1失败2.39秒。该测试同轮另一次跑到全部通过28.90秒，但不能据此宣称最终全量通过。其余模式、worker、健康、列表、布局和协议均通过，新增全局错误红测修复后gui_pages通过。既有Vulkan头、dxcompiler/dxil部署告警非阻断。
+- **真实SSH业务矩阵通过**：最终探针运行`windows_mode_ssh_test.py`（原严格手动矩阵+新增auto）退出0，根`/tmp/chunkharbor-mode-Rfj1b0j7`。覆盖Full/Incremental/Skip不增版本、旧full会话被auto恢复、关闭手动开关仍自动恢复、auto检查点被手动resume读取、丢失提交回执恢复Skip、混合四策略、损坏JSON/失效会话保留原字节、仅错误不授权/安全行部分成功、源变化、配置三类变更、部分成功重扫/重试、扫描后会话失效在DATA前拒绝、无在途任务时远端新版本使旧Skip失效；只读SQLite版本/指针/accepted数量及服务端SHA-256断言通过。已查看最终真实MainWindow探针截图`build-windows-gui/auto-advice.png`，当前DPR1.25下四策略文字及分类预计量可见。
+- **原有真实SSH回归**：`windows_gui_ssh_test.py`本轮worker业务实现后通过，根`/tmp/chunkharbor-m5-data-L804Bpbt`，含GUI kill+server SIGKILL后恢复、中文/空文件/排除、单块变化、暂停取消和关窗；此后仅策略列显示及全局失败文案修正。最终探针`windows_gui_rescan_test.py`退出0，根`/home/ning/ChunkHarbor/build/rescan-data-722wYAdS`，覆盖A/B切换、重复扫描、锁定/缺失源、修改源保留状态及另目标上传；其夹具由原脚本带路径检查清理。精确命令见专项文档，测试服务/隧道已结束，未接触真实备份。
+- **失败与审查**：初始auto/策略列2个真实红测失败；测试初稿变量作用域错误先修夹具才取得行为失败。竞态夹具想让另一任务提交在途目标，实际被服务端target-busy拒绝，调整为断言该保护并分开验证真正远端更新；续传基线错误用本地可控TCP验证0DATA，不冒充真实server并发复现。中途全量22/24，另有既有文件列表cancel夹具unexpected client disconnect；随后最终该项通过。一次重扫与链接探针重叠报Windows文件占用，纠正顺序重跑通过。只读独立审查按本轮前快照核对，未发现确定新安全问题；审查者未自行测试。`git diff --check`及原进度正文比对通过。
+- **未验证/风险/停止点**：未同步/重编译Ubuntu、未跑Linux全量、Linux Qt/MSVC/Release/Sanitizer、旧GUI二进制、硬件故障/长期压测、物理人工输入或本轮多档DPI。原生ComboBox自动输入失败仍未定位，不能称全部GUI回归通过；本轮不越界修复。64MiB/原超时/串行模型保留，额外续传Preview有哈希/清单成本，不宣称性能提升。无法关联的损坏状态仍是全局错误；无本机检查点/端点迁移不自动接管会话。R1全阶段未验收。未commit/push，保留前轮未提交改动，本轮停止，不自动推进R2。
+
+## R1 备份模式校验与扫描建议完成（2026-11-03）
+
+- **原行为/根因**：full保护Absent目标，incremental用固定块增量，resume复用持久会话；但原`BackupConfig::resume`自动开关同时控制显式resume，无检查点/关闭开关会静默转为新上传。full预览的Absent限制不能提供已有版本的差异建议；无变化仍可能提交同内容版本。页面配置变更仅禁按钮，控制器预览资格及retry存在绕过/旧基线风险。
+- **最小实现**：扫描用真实Preview/Auto和QUERY_DELTA，核验检查点源身份、大小、SHA-256、端点、路径、块大小、会话类型/阶段/基线；剩余量取服务端位图。新增内存BackupAdvice/modeAllowed/resumeSession，预览区显示首次/增量/续传/无需上传/待核验分类及不适配原因，不静默改模式。显式resume必须有效会话，自动开关仅控制full/incremental；full已有目标拒绝（本任务完成记录匹配且当前内容一致可安全跳过）。无变化执行固定版本复核，不发DATA_CHUNK/COMMIT、不伪造versionId；损坏/失效/不匹配状态保留并拒绝。
+- **预览/重试**：模式或配置改变清空控制器预览；执行前复核源与Absent/Exact基线。正式执行任何结果都使旧pins失效；retry按原配置重扫，用户确认后再开始。真实红测确认旧retry在A成功/B取消后使A冲突而B继续提交；修复后只生成A无需上传/B续传预览，B未确认不发布，再执行A版本不变、B哈希一致。独立静态审查确认该P2已解决，未发现其他确定的模式安全问题；审查者未自行运行测试。
+- **修改文件**：生产BackupWorker、TransferTypes、TaskModel、TransferController、BackupPage、SettingsPage；worker单测、GUI探针及其CMake样式资源，新增windows_mode_ssh_test并更新windows_gui_ssh_test旧混合目录预期。新增[R1_BACKUP_MODES](R1_BACKUP_MODES.md)，更新BUILD_WINDOWS/GUI_DESIGN。未修改本轮健康检查、ComboBox、服务端、协议、schema/client_core；保留前轮未提交内容和下方M历史。
+- **Windows实际构建/回归**：Qt6.8.3/MinGW13.1/Ninja/Debug，Kit在`D:/QT`；`cmake -S . -B build-windows-gui`、`cmake --build build-windows-gui -j 2`退出0。最终隔离串行`ctest --test-dir build-windows-gui --output-on-failure` **24/24通过，127.99秒**（非性能指标），含worker、健康、协议、列表、布局和原生ComboBox。之前全量曾23/24（ComboBox原生自动输入`mouse opens actual popup`失败）；不改组件单项复跑1/1通过28.94秒，最终全量也通过，但间歇性桌面输入原因未定位，不抹去失败。既有Vulkan头和dxcompiler/dxil部署告警非阻断。
+- **真实Windows→SSH→Ubuntu三项通过**：`windows_mode_ssh_test.py`模式矩阵全部退出0，专用根`/tmp/chunkharbor-mode-p540xG4b`；覆盖全新/增量/无变化、错误full/resume、关闭自动开关的显式续传执行、源大小变化/同大小内容变化、损坏JSON/失效会话且记录保留、模式切换、部分成功重试、混合目录和执行前远端更新。只读SQLite验证版本数/指针及未确认不发布，逐文件SHA-256一致。既有`windows_gui_ssh_test.py`重跑通过（根`/tmp/chunkharbor-m5-data-JnIixQ6z`），含GUI kill+server SIGKILL后恢复、中文/空文件/排除、单块变化、暂停取消/关窗恢复；混合目录严格resume先拒绝无会话新文件，再由测试明确选incremental重扫确认。`windows_gui_rescan_test.py`通过，含A/B切换、反复重扫、锁定/缺失源和旧会话保护；其专用夹具由脚本清理。精确参数见专项文档。
+- **失败及证据**：最初新增无会话resume单测在旧代码失败，修复后通过；QUERY Peer作用域初稿使单连接假服务端超时，缩短RAII作用域后通过。新SSH夹具初稿将状态目录与外部源重名，改独立states/后重测。旧端到端“混合目录resume静默上传新文件”的断言按新严格规则更新，而非放松生产保护。已查看`build-windows-gui/mode-advice.png`真实MainWindow探针截图，分类建议可见；测试同时断言可见文案及未自动改模式。`git diff --check`通过，既有PROGRESS从HEAD的M6发布记录起全文经换行规范化比对一致。
+- **未验证/风险**：未同步/重编译Ubuntu、未重跑Linux全量（本轮无后端修改），未测Linux Qt/MSVC/Release/Sanitizer、硬件故障或长期负载；未做本轮人工操作、多档DPI。QUERY_DELTA不列出完整源身份，必须同时有本机检查点；丢失检查点不自动接管远端会话，转发端点变化不自动迁移。full拒绝已有目标而不新增覆盖对话框；批任务仍非跨文件原子。64MiB限制及原超时保留，无需上传仍会进行小型Preview协商。R1全阶段尚未宣称验收。
+- **停止点**：本项完成；测试服务/隧道已结束，不触碰真实备份，未commit/push。下一轮由用户选择R1余项，当前可人工复核实际备份目录的分类建议与严格模式提示，不自动推进R2或其他功能。
+
+## R1 ComboBox弹层圆角修复完成（2026-11-03）
+
+- **根因**：原生Windows运行确认popup顶层透明/无边框/NoFrame展开后仍有效，但Qt私有容器额外绘制PE_PanelMenu，外角alpha=255，内层QSS圆角外出现矩形底框和平台阴影。新增真实MainWindow弹层测试先观察到像素断言失败，再改实现；不是只改QSS猜测根因。
+- **最小修改**：仅生产ComboBox.h和Light.qss。保留QComboBox容器及输入机制，局部过滤popup Paint，透明清底后绘制统一圆角/边框/轻阴影；禁用原生附加阴影，列表/viewport不重复铺底。透明样式仅限定comboPopupList，不改通用QComboBox；给阴影留逻辑像素边距，面板与控件对齐、宽度/屏幕水平边界受控。无业务、网络/健康检查、协议、SQLite或其他页面布局修改。
+- **测试与截图**：新增combo_popup_test.cpp及CMake目标（Qt6::Test仅测试链接，标记native-desktop串行）。备份/日志/设置5个下拉框，在普通/最大化、实际DPR1/1.25/1.5均验证四角透明、宽度/位置、鼠标、上下键、Enter、Escape、外部点击关闭和焦点返回；原生屏幕、整窗及独立alpha截图已查看，矩形底框消失、浅蓝高亮保持。产物位于忽略目录build-windows-gui/combo-artifacts。
+- **实际命令/结果**：Windows Qt6.8.3/MinGW13.1/Ninja/Debug，`cmake -S . -B build-windows-gui`及`cmake --build build-windows-gui -j 2`成功；Windows QPA下QT_SCALE_FACTOR=0.8/1/1.2对应实际100/125/150，专项均通过，最终100/150专项分别28.75/28.76秒；取消比例覆盖后`ctest --test-dir build-windows-gui --output-on-failure`完整 **24/24通过**（125.77秒，非性能指标），含最终125%弹层和原健康/上传worker/列表等回归。完整设计、命令、失败与截图映射见 [R1_COMBO_POPUP](R1_COMBO_POPUP.md)。
+- **失败/边界**：测试初稿findChild自定义无Q_OBJECT类编译失败，修夹具后才取得真实红测；直接QWidget合成点击被弹层防误触逻辑忽略，最终QTest QWindow输入路径通过。SetCursorPos返回false，未变更系统输入权限：已做真实Windows显示和自动事件验证，未做人工物理鼠标或全局OS缩放切换/混合DPI跨屏验收。Linux GUI/MSVC/Release/Sanitizer/其他Qt风格与版本未测；既有Vulkan与dxcompiler/dxil告警非阻断。独立静态审查无生产阻断问题，建议明确原生桌面测试要求，已标记。
+- **范围/下一步**：保留前轮所有未提交改动及M历史；docs/PROGRESS已更新，未提交/push，不同步Ubuntu、不触碰真实备份。本轮仅此UI项，完成后停止；下一轮仍由用户选择R1可复现最小问题，不自动推进。
+
+## R1 上传断连补充核验：约10.9MiB与默认30秒（2026-11-03）
+
+- 用户提供中文路径JPEG约10.9MiB、其他文件继续、无暂停直接证据；仍无完整日志/等待时长。该大小未触发64MiB限制，不能将旧截图直接归因于大文件/暂停，也不能将此前缩短idle的复现自动等同原故障。
+- **仅测试/记录变更**：新增windows_upload_disconnect_matrix.py；测试upload_delay_hook新增有界延迟/跳过块参数，默认仍2秒/0块。没有改生产代码、客户端/服务端30秒期限或任何保护。用11,429,478字节合成文件，前8块真实ACK后在第9块注入，私有根/随机端口/独占PID，不读取原照片。
+- **实际默认配置5场景通过**：normal成功；28秒慢同步成功（整批36.58秒，marker和耗时断言确认）；32秒同步触发client原文server response timed out（整批33.52秒），后续文件成功；终止自建SSH隧道而server存活，以及SIGKILL测试server而隧道保留，均可产生server disconnected且后续文件连接也失败。脚本不传idle-timeout-ms，沿用server默认30秒。
+- **恢复证据**：超时和隧道断开场景服务端保留9块，GUI真实查询后只补340块；server被杀后启动恢复保留8块，只补341块。checkpoint失败时completed=false、无成功version；恢复后的两个文件逐项SHA-256一致。未收到第9块ACK不能断言该块未落盘，必须查询持久会话。
+- **关联构建/测试**：Ubuntu原工程`cmake --build build --target chunkharbor-upload-delay-hook -j 2`成功；`ctest --test-dir build -R 'application_pause_test|tcp_connection_test|upload_idle_integration|delta_fault_integration|resume_integration' --output-on-failure` **5/5通过**。Windows沿用原GUI二进制运行五模式真实SSH矩阵均退出0；精确命令/专用根/审查补强见[R1_UPLOAD_DISCONNECT](R1_UPLOAD_DISCONNECT.md)。本轮未重跑Linux51项或Windows23项全量，不列为本轮新证据。
+- **结论/剩余**：30秒是单次请求等待，非整个文件上传时长。单文件捕获异常并继续下一Peer符合当前设计；持续SSH/server失效时后续也失败。原截图后续成功不太符合持续性整条隧道中断，但瞬时网络/SSH channel/单TCP关闭及默认阈值竞态仍未排除。缺同一连接的客户端请求ID/类型/耗时/socket错误、服务端关闭原因/配置/退出记录、SSH时间线和实际二进制信息，不能将server disconnected文本当作根因。
+- 未做物理网络黑洞/丢包、真实磁盘长尾/硬件故障、原照片/原负载复现；不新增自动重连或延长期限。测试服务和隧道已结束、根保留，未触碰真实备份，未提交/push。本轮停止，仅在真实再次复现时继续补上传诊断，不推进其他功能。
+
+## R1 第二项完成：磁盘工作期间被误判空闲导致上传断开（2026-11-03）
+
+- **确认根因**：UploadHandler接受请求后pauseReading并投递有界DiskExecutor，但TcpServer定时器原只看lastActivity。排队/校验/同步超过idle阈值会在结果返回前关上传连接，BackupWorker独立Peer抛server disconnected。健康检查QtTcpTransport为另一个对象，本轮未改其代码。每文件独立Peer及try/catch使失败文件记错并保留会话，后续文件能在新连接继续；工作池仍堵时也可能连续失败。
+- **复现证据**：新增仅测试LD_PRELOAD，首次.delta文件fdatasync前延迟2秒。旧Linux server idle500ms在持久确认前返回EOF，专项红测失败；真实Windows GUI→SSH→Ubuntu idle1500ms复现首文件server disconnected、下一文件成功，再Resume后两文件哈希一致。未取得用户原始日志/时长，不能断言历史所有断开都同源；生产默认30秒阈值未改。
+- **最小修改**：仅两个生产文件TcpConnection.h、TcpServer.cpp；新增idleTimeoutSuspended=applicationPaused且非readEof，回收暂跳过服务端业务等待。普通空闲、输出高水位背压、shutdownAfterWrite错误排空仍可回收。完成后原send更新活动时间、queueInLoop恢复读取；ACK/SQLite/协议、线程归属、队列上限和客户端超时不变，没有吞异常/伪成功/添加自动重连。
+- **测试文件**：新增upload_delay_hook.cpp、upload_idle_test.py、windows_upload_idle_ssh_test.py及CMake专项；补application_pause_test与tcp_connection_test。覆盖慢同步前无ACK/无EOF、真正空闲仍关、正常上传、TCP RST丢失ACK后QUERY_DELTA缺块02→只补第二块→提交。独立静态审查未发现生产阻断问题；按审查建议用小SO_SNDBUF和512KiB输出保证错误排空测试连接仍打开。
+- **Ubuntu实际命令/结果**：原工程GUI=OFF、复用缓存；`cmake -S . -B build`、`cmake --build build -j 2`、`ctest --test-dir build --output-on-failure`成功，最终生产代码 **51/51通过**（36.72秒）。本轮网络变更需要全量回归，实际重建此前清理的测试产物。随后只补RST及排空测试断言，重建application_pause目标并执行`ctest --test-dir build -R "application_pause_test|tcp_connection_test|upload_idle_integration" --output-on-failure`，**3/3通过**；无后续生产修改。
+- **Windows实际命令/结果**：Qt6.8.3/MinGW13.1/Ninja/Debug；匹配Kit PATH下`cmake -S . -B build-windows-gui`、`cmake --build build-windows-gui -j 2`成功，`ctest --test-dir build-windows-gui --output-on-failure` **23/23通过**（117.35秒，非性能指标）。两项真实SSH脚本通过：新增慢持久化GUI双文件上传及SHA-256；既有windows_gui_ssh_test正常/增量/GUI进程kill+server SIGKILL重连续传、暂停取消与关窗恢复均通过。精确脚本参数与设计见 [R1_UPLOAD_DISCONNECT](R1_UPLOAD_DISCONNECT.md)。
+- **失败记录**：GUI最初idle500ms导致两个文件都失败（第二请求也等数据库锁），不是预期单文件隔离，改1500ms后稳定复现一失败一成功；不改产品默认值。首轮修复后夹具ACK误用length导致KeyError，改协议真实data_length后通过；均未冒充通过。Windows既有Vulkan头告警非阻断。
+- **版本/数据边界**：保留前轮未提交GUI与文档；Ubuntu同步前干净，仅同步本轮Linux源码、CMake及Linux测试，未同步全部Qt/文档，不声称三端全一致。使用脚本自建私有根，服务/隧道已停止，测试根保留；未覆盖真实备份，未提交/push。
+- **剩余/未验证**：工作永久卡死仍可能占用有界任务/连接，没有新增服务端工作硬截止，客户端仍30秒等待上限；用户暂停/本地哈希导致真实网络空闲未在本轮修改。未跑Release/Sanitizer/TSan/MSVC/Linux GUI、默认30秒阈值长期慢磁盘、物理掉线/真实磁盘满/硬件掉电、GB文件/性能测试。受控慢同步和RST不等于硬件故障。
+- **下一轮唯一建议**：若真实上传仍报断开，先用失败文件大小、暂停/哈希/等待时长与服务端参数关联日志，单独复现客户端真实空闲或其他关闭路径；不无证据增加心跳/重试。本轮到此停止，不自动继续模式或其他功能。
+
+## R1 首项完成：GUI 可达性误判与周期检查（2026-11-03）
+
+- **已完成**：真实MainWindow+loopback TCP红测确认“合法HELLO_ACK后健康对端关闭导致离线”误判；QtTcpTransport新增显式HealthState和healthChanged，顶部/总览显示未检查、检查中、可达、不可达，诊断文字不再驱动状态。用户首次检查后，每次独立HELLO完成15秒后复查、单次5秒超时；成功先标terminal再关闭socket，正常清理不覆盖结果。失败自动复查，手工立即重试；端点修改停止旧socket/超时/复查并失效结果。
+- **范围与所有权**：仅R1这一项；socket/两个QTimer仍属Qt事件线程，QObject context管理回调，单实例一个在途探测；列表connectForRequests保持原请求模式，不启动健康复查，BackupWorker独占线程/socket不变。不改后端、协议、schema、持久化会话或备份数据。
+- **文件**：QtTcpTransport.h/.cpp、MainWindow.cpp、DashboardPage.cpp；新增tests/unit/gui_health_test.cpp及CMake测试目标，gui_pages_test移除直接发射ready/failed伪造网络状态的旧断言。更新GUI_DESIGN、BUILD_WINDOWS、路线图状态；完整设计/学习点/命令与限制见 [R1_GUI_HEALTH](R1_GUI_HEALTH.md)。保留上轮所有未提交文档。
+- **实际Windows验证**：Qt6.8.3/MinGW13.1/Ninja/Debug；`cmake -S . -B build-windows-gui`、`cmake --build build-windows-gui -j 2`均退出0；最终`ctest --test-dir build-windows-gui --output-on-failure` **23/23通过**（96.57秒，非性能指标）。健康测试44.95秒，使用真实15秒周期，覆盖peer关闭、应用沉默超时、周期恢复、端点取消旧超时、拒绝/手工恢复、在途销毁；原列表/worker/七类握手回归均通过。
+- **独立无Qt验证**：原MinGW13.2缓存，`cmake -S . -B build-windows-protocol`、`cmake --build build-windows-protocol -j 2`、`ctest --test-dir build-windows-protocol --output-on-failure`均退出0，**16/16通过**。两套命令分别使用匹配Kit的PATH，见专项文档。
+- **真实SSH**：本轮Windows GUI --probe-port经自建临时SSH隧道到Ubuntu原工程server的临时--handshake/随机端口（45563），退出0；按/proc/PID/exe确认归属后停止本轮服务和隧道，没有存储根和常驻服务重启。不据此宣称跨机周期故障测试通过。
+- **失败与未验证**：旧实现先见行为断言红测；扩展测试两次因拒绝端口等待失败（首轮通用超时，定位后为refused connection），将测试2秒假设改为覆盖应用5秒截止的7秒容差，生产超时不变。Vulkan头和dxcompiler/dxil既有非阻断告警仍在。未执行Linux GUI/MSVC/Release/Sanitizer/长期检查、真实SSH断网/服务崩溃周期恢复、新GUI上传；未同步Ubuntu本轮源码/重跑Linux全量或重建此前清理的测试产物。
+- **剩余问题/边界**：“可达”只表示最近HELLO成功，handshake模式也可达，不保证备份能力、磁盘/SQLite或提交健康；正常事件循环下故障约15秒复查+最多5秒等待后体现，睡眠/主线程停顿会延后。R1上传异常、备份模式及其他GUI问题尚未完成，R2以后未开始。
+- **审查**：独立只读代码审查未发现阻断问题；重点核对terminal后关闭、双计时器取消、单次复查调度、请求/备份连接隔离及QObject生命周期，审查者未重复运行测试。文档链接、UTF-8、原M历史完整保留及git diff --check已核验。
+- **下一轮唯一建议**：选择一个可复现的full/resume/incremental模式判断或上传异常，先写回归再最小修复；不自动执行。本轮到此停止，未提交或push。
+
+## 当前状态：V3 路线冻结与现状审计（2026-11-03）
+
+本节为最新状态；下方 M0–M7 记录按发生时保留，其中“未实现”“未提交”“下一步”等只代表当时，不覆盖本节。新路线见 [ROADMAP_V3](ROADMAP_V3.md)，功能矩阵、源码依据、差异与精确命令见[本次审计](PROJECT_AUDIT_2026-11-03.md)。
+
+- **已完成**：本轮源码/文档/Git/环境审计和路线文档整理；既有 M0–M5 工程、Reactor、上传校验、SQLite持久续传、固定块增量/预览及真实Qt备份客户端已有实现与历史验收；M6只完成服务端当前文件分页、GUI文件分页和Linux CLI当前单文件安全下载，不代表M6全部完成。
+- **进行中**：后续主线转为单用户可靠性；本轮仅建立文档与既有回归证据，尚未开始 R1 业务修复。
+- **规划中**：R1连接/上传/模式/GUI回归；R2 GUI与文件夹恢复/服务端历史/指定版本/目录快照；R3 GB文件与容量；R4生命周期/数据库/日志/长期运行；R5认证隔离；R6管理/配额/审计；R7有界并行与FastCDC独立实验；R8压测/Docker/弱网及条件允许的云验证。依赖 R1→R2→R3→R4→R5→R6→R7→R8。
+- **未实现边界**：GUI恢复、服务端历史查询与任意旧版本选择、目录快照、GB文件、完整版本GC/配额、TLS/认证/多用户/管理员、性能报告。已有不可变版本不是目录快照；下载 `--version-id` 仅检查当前版本，GUI版本页是本机提交记录。当前单文件仍限64MiB，仅可信loopback/SSH。
+- **版本证据**：审计开始Windows工作分支 `codex/m5-gui`、Ubuntu原工程main均干净；两端HEAD及GitHub main只读查询均为 `31e5d3a7f2ea6235ba363cebc2001b06e0d08c79`。Windows本地main仍停M4，不自动切换/同步；本轮新增文档修改尚未提交，不据此宣称文档三端同步。
+
+### 本轮真实验证
+
+Windows Qt6.8.3 / MinGW13.1 / Ninja / Debug，复用现有缓存：
+
+```powershell
+$env:PATH='D:/QT/Tools/mingw1310_64/bin;D:/QT/6.8.3/mingw_64/bin;'+$env:PATH
+cmake -S . -B build-windows-gui
+cmake --build build-windows-gui -j 2
+ctest --test-dir build-windows-gui --output-on-failure
+```
+
+配置/构建退出0，完整 **22/22通过**；56.84秒不是性能指标。Vulkan头及dxcompiler/dxil缺失告警非阻断，不作为正式打包验收。
+
+Ubuntu原工程经 `ssh -o BatchMode=yes -o ConnectTimeout=8 miniob-ubuntu` 实际执行：
+
+```bash
+cd /home/ning/ChunkHarbor
+cmake --build build --target chunkharbor-server chunkharbor-cli -j 2
+python3 tests/integration/files_list_test.py ./build/chunkharbor-server ./build/chunkharbor-cli
+python3 tests/integration/download_test.py ./build/chunkharbor-server ./build/chunkharbor-cli
+```
+
+构建及两项集成均退出0，覆盖真实上传/列表、当前下载、版本固定、安全发布与重启；使用脚本自建临时数据根。未执行Linux重新配置/全量CTest（保留此前按用户要求清理测试产物后的状态，未为本次文档审计重建全套测试）；50/50仅为历史。未重跑真实Windows GUI→SSH业务、Release/Sanitizer/TSan/MSVC/Linux GUI、GB端到端、长期/性能/硬件故障，不能宣称通过。
+
+### 下一轮唯一最小任务建议
+
+**R1：顶部连接检测状态的语义与窗口级回归。** 审查 MainWindow 的 statusChanged/ready、QtTcpTransport 探测后断开路径，与独立备份/列表连接的关系；先复现握手后断开、端点切换及独立请求结果造成的显示问题，再最小修复。现有探针主要检查握手退出码，不能证明顶部状态持续正确；本轮仅静态列出风险，未确认用户具体症状根因或修复业务代码。此项完成后再逐个排上传异常和模式判断，不直接跳入R2。
+
+本轮改动仅为AGENTS、开发指南、README、BUILD_WINDOWS、PROGRESS及新增路线图/审计文档；未改协议/schema/持久会话、未触碰真实备份、未提交/推送。每轮按路线图末节执行学习说明→最小设计→复现/实现→实际验证→PROGRESS证据更新。
+
+## 以下为原 M0–M7 开发历史（保留原文）
+
 ## M6发布与Ubuntu原工程同步完成（2026-11-02）
 
 - 用户明确授权提交/推送GitHub并同步Ubuntu原项目；范围为已有M6分页、Linux下载、GUI文件列表及重扫/布局修复，不宣称M6全阶段完成。新增忽略`tests/testFiles`，不发布用户照片/ZIP、SDK、构建产物或备份数据。

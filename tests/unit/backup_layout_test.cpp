@@ -27,6 +27,8 @@ void settle() {
 }
 
 void checkPreview(QTableView *table, const QString &state) {
+    check(table->columnWidth(4) >= table->fontMetrics().horizontalAdvance(QStringLiteral("断点续传")) + 24,
+          state + ": execution strategy must fit its text and item padding");
     auto *card = table->parentWidget();
     auto *layout = qobject_cast<QVBoxLayout *>(card->layout());
     check(layout && layout->count() == 3, state + ": preview title, summary and table exist");

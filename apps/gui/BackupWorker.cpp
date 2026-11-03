@@ -35,7 +35,11 @@ QString friendly(const std::exception &e) {
     const auto detail = qstr(e.what());
     const auto key = detail.toLower();
     QString message;
-    if (key.contains("pending checkpoint source/configuration mismatch"))
+    if (key.contains("no valid resume session"))
+        message = "没有有效且匹配的续传会话；请按预览建议选择首次上传或增量备份并重新扫描。";
+    else if (key.contains("session_not_found") || key.contains("session not resumable"))
+        message = "续传会话失效或尚不可恢复；已保留检查点，请核验服务器后重试，或使用新的远端路径。";
+    else if (key.contains("pending checkpoint source/configuration mismatch"))
         message = "该目标有未完成上传，但源文件或配置已变化，不能直接续传；请恢复原文件和配置，或使用新的远端路径备份。";
     else if (key.contains("full upload target changed"))
         message = "本任务已完成的文件在服务器上发生变化；首次完整上传不会覆盖，请选择增量备份或新的远端路径。";
@@ -326,6 +330,7 @@ namespace gui {
 RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRecord> &pinned,
                     RunControl &control, const WorkerCallbacks &cb) {
     RunResult result;
+    const bool automatic = config.mode == "auto";
     TransferProgress progress;
     QElapsedTimer timer;
     timer.start();
@@ -355,7 +360,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
     try {
         cancelled(control);
         if (!config.port || !config.chunkSize || config.chunkSize > MaxChunkDataSize ||
-            (config.mode != "full" && config.mode != "resume" && config.mode != "incremental"))
+            (!automatic && config.mode != "full" && config.mode != "resume" && config.mode != "incremental"))
             throw std::runtime_error("invalid task configuration");
         if (config.stateDirectory.isEmpty())
             throw std::runtime_error("state directory required");
@@ -396,6 +401,11 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                 r.status = "错误";
                 r.change = "错误";
                 r.note = qstr(e->error);
+                r.modeAllowed = false;
+                if (automatic) {
+                    records.append(r);
+                    continue;
+                }
                 entry(r);
                 ++result.failed;
                 continue;
@@ -404,11 +414,20 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
             records.append(r);
         }
         // An unfinished task must not silently forget a source deleted between runs.
-        if (config.resume) {
+        { // Retain safety checks even when automatic resume is disabled.
+            std::set<QString> currentUploads;
+            if (automatic)
+                for (const auto &r : records)
+                    currentUploads.insert(QString::fromLatin1(QCryptographicHash::hash(
+                        (root + "\n" + r.logicalPath + "\n" + r.endpoint + "upload").toUtf8(),
+                        QCryptographicHash::Sha256).toHex()) + ".json");
             const auto states = QDir(stateDir).entryList({"*.json"}, QDir::Files);
             if (states.size() > 20001)
                 throw std::runtime_error("checkpoint record limit exceeded");
             for (const auto &name : states) {
+                // Present files validate their checkpoints in an isolated try/catch.
+                // Unassociated records still receive the conservative preflight.
+                if (currentUploads.count(name)) continue;
                 auto saved = readJson(stateDir + "/" + name);
                 auto identity = saved.value("identity").toObject();
                 if (identity.value("root").toString() != root ||
@@ -427,15 +446,25 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                         found = true;
                         break;
                     }
-                if (!found)
-                    throw std::runtime_error("unfinished backup source missing or excluded; "
-                                             "restore source/configuration");
+                if (!found) {
+                    if (!automatic)
+                        throw std::runtime_error("unfinished backup source missing or excluded; "
+                                                 "restore source/configuration");
+                    FileRecord missing;
+                    missing.localPath = identity.value("local").toString();
+                    missing.logicalPath = expectedPath;
+                    missing.endpoint = identity.value("endpoint").toString();
+                    missing.status = missing.change = "错误";
+                    missing.modeAllowed = false;
+                    missing.note = "未完成会话的源文件缺失或被排除；请恢复原源文件/配置，检查点保留。";
+                    records.append(missing);
+                }
             }
         }
         progress.totalFiles = records.size();
         std::map<QString, FileRecord> pins;
         for (const auto &p : pinned)
-            if (p.status != "已跳过" && p.status != "错误")
+            if (p.change != "已排除" && (automatic || (p.status != "已跳过" && p.status != "错误")))
                 pins.emplace(p.logicalPath, p);
         if (!preview && pins.size() != static_cast<size_t>(records.size()))
             throw std::runtime_error("directory changed or preview required; scan again");
@@ -444,13 +473,25 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                 auto p = pins.find(r.logicalPath);
                 if (p == pins.end())
                     throw std::runtime_error("directory changed after preview");
-                progress.totalBytes += p->second.missingBytes;
+                if (p->second.modeAllowed) progress.totalBytes += p->second.missingBytes;
             }
         for (auto r : records) {
             cancelled(control);
             progress.file = r.logicalPath;
             emitProgress("正在生成分块清单", true);
             try {
+                if (automatic && !preview && pins.at(r.logicalPath).strategy == BackupStrategy::Error) {
+                    r = pins.at(r.logicalPath);
+                    r.note += "；本次未授权上传，请修复后重新扫描。";
+                }
+                if (automatic && (r.status == "错误" || (!preview && !r.modeAllowed))) {
+                    r.modeAllowed = false;
+                    r.strategy = BackupStrategy::Error;
+                    entry(r);
+                    ++result.failed;
+                    ++progress.completedFiles;
+                    continue;
+                }
                 auto owned = std::make_shared<Owned>(fsPath(r.localPath), control);
                 auto source = snapshot(owned, r.logicalPath, config.chunkSize);
                 r.sha256 = qstr(source.metadata.sha256);
@@ -458,8 +499,8 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                 DeltaOptions options;
                 options.mode = preview ? DeltaMode::Preview : DeltaMode::Upload;
                 options.cancelled = [&] { return control.checkpoint(); };
-                if (config.mode == "full")
-                    options.base.kind = BaseSelector::Kind::Absent;
+                // Preview discovers actual state even for an unsuitable selected mode.
+                // Execution is still bound to the preview's explicit baseline below.
                 if (!preview) {
                     const auto &p = pins.at(r.logicalPath);
                     if (p.sha256 != r.sha256 || p.size != r.size || p.localPath != r.localPath)
@@ -494,96 +535,124 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                         .toHex();
                 auto uploadPath = stateDir + "/" + QString::fromLatin1(uploadKey) + ".json";
                 QJsonObject saved;
-                bool ownCompletedFull = false;
-                if (config.resume && QFileInfo::exists(uploadPath)) {
+                bool ownCompletedFull = false, pendingSession = false, committedSession = false;
+                QString savedMode;
+                std::optional<DeltaCheckpoint> checkpoint;
+                std::optional<DeltaStatus> activeStatus;
+                if (QFileInfo::exists(uploadPath)) {
                     saved = readJson(uploadPath);
+                    if (!saved.value("identity").isObject() || !saved.value("completed").isBool())
+                        throw std::runtime_error("invalid checkpoint fields");
                     auto previous = saved.value("identity").toObject();
-                    if (config.mode == "resume" && previous.value("mode").toString() == "full")
-                        identity["mode"] = "full";
+                    savedMode = previous.value("mode").toString();
+                    if (savedMode != "full" && savedMode != "incremental")
+                        throw std::runtime_error("invalid checkpoint mode");
                     auto previousSource = previous, currentSource = identity;
-                    previousSource.remove("base");
-                    currentSource.remove("base");
-                    ownCompletedFull = config.mode == "full" && saved.value("completed").toBool() &&
-                                       previousSource == currentSource;
-                    if (preview && ownCompletedFull)
-                        options.base.kind = BaseSelector::Kind::Auto;
-                    if (!saved.value("completed").toBool() && (preview || previous != identity)) {
-                        if (previousSource != currentSource)
-                            throw std::runtime_error("pending checkpoint source/configuration "
-                                                     "mismatch; restore original source");
-                        DeltaCheckpoint checkpoint{
-                            id(saved.value("session").toString()),
-                            saved.value("base").toString() == "absent"
-                                ? std::optional<VersionId>{}
+                    for (auto *object : {&previousSource, &currentSource}) {
+                        object->remove("base");
+                        object->remove("mode");
+                    }
+                    const bool sourceMatches = previousSource == currentSource;
+                    if (!saved.value("completed").toBool() && !sourceMatches)
+                        throw std::runtime_error("pending checkpoint source/configuration mismatch; restore original source");
+                    ownCompletedFull = config.mode == "full" && savedMode == "full" &&
+                                       sourceMatches && saved.value("completed").toBool();
+                    if (sourceMatches && (!saved.value("completed").toBool() || config.mode == "resume")) {
+                        checkpoint = DeltaCheckpoint{id(saved.value("session").toString()),
+                            saved.value("base").toString() == "absent" ? std::optional<VersionId>{}
                                 : std::optional<VersionId>{id(saved.value("base").toString())}};
-                        auto response = [&] {
+                        const auto response = [&] {
                             Peer queryPeer(config.port, control);
-                            return queryPeer.request(
-                                {28, 2, encodeQueryDelta({checkpoint.session})});
+                            return queryPeer.request({28, 2, encodeQueryDelta({checkpoint->session})});
                         }();
                         if (response.type != 29)
                             throw std::runtime_error("unexpected session status response type");
-                        auto status = decodeDeltaStatus(response.payload);
-                        if (status.sessionId != checkpoint.session ||
-                            status.mode != DeltaMode::Upload ||
-                            status.baseVersion != checkpoint.base)
+                        const auto status = decodeDeltaStatus(response.payload);
+                        if (status.sessionId != checkpoint->session || status.mode != DeltaMode::Upload ||
+                            status.baseVersion != checkpoint->base)
                             throw std::runtime_error("saved session query identity mismatch");
                         if (status.phase == DeltaPhase::Committed) {
-                            // The server may commit before the client can publish its local
-                            // receipt. Reuse the core's complete result verification before
-                            // acknowledging locally.
                             DeltaOptions recovery;
                             recovery.mode = DeltaMode::Upload;
                             recovery.resume = checkpoint;
                             recovery.cancelled = [&] { return control.checkpoint(); };
-                            recovery.base.kind = checkpoint.base ? BaseSelector::Kind::Exact
-                                                                 : BaseSelector::Kind::Absent;
-                            if (checkpoint.base)
-                                recovery.base.versionId = *checkpoint.base;
+                            recovery.base.kind = checkpoint->base ? BaseSelector::Kind::Exact : BaseSelector::Kind::Absent;
+                            if (checkpoint->base) recovery.base.versionId = *checkpoint->base;
                             Peer recoveryPeer(config.port, control);
-                            auto recovered = runDelta(
-                                source, [&](const Frame &f) { return recoveryPeer.request(f); },
-                                recovery);
-                            if (!recovered.result)
-                                throw std::runtime_error("missing recovered commit result");
-                            auto receipt = r;
-                            receipt.status = "已完成";
-                            receipt.versionId = hex(recovered.result->versionId);
-                            receipt.baseVersion = saved.value("base").toString();
-                            receipt.time =
-                                QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
-                            restorePlan(receipt, saved);
-                            receipt.note = receipt.change == "未知"
-                                               ? "已核验提交；原始差异统计不可用"
-                                               : "已核验并恢复服务器提交记录";
-                            saved["completed"] = true;
-                            atomicJson(uploadPath, saved);
-                            entry(receipt);
-                            log("信息", r.logicalPath + "：" + receipt.note);
+                            const auto recovered = runDelta(source, [&](const Frame &f) { return recoveryPeer.request(f); }, recovery);
+                            if (!recovered.result) throw std::runtime_error("missing recovered commit result");
+                            committedSession = true;
+                            if (!saved.value("completed").toBool()) {
+                                auto receipt = r;
+                                receipt.status = "已完成";
+                                receipt.versionId = hex(recovered.result->versionId);
+                                receipt.baseVersion = saved.value("base").toString();
+                                receipt.time = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+                                restorePlan(receipt, saved);
+                                receipt.note = "已核验并恢复服务器提交记录";
+                                saved["completed"] = true;
+                                atomicJson(uploadPath, saved);
+                                entry(receipt);
+                            }
+                            ownCompletedFull = config.mode == "full" && savedMode == "full";
+                        } else if (status.phase == DeltaPhase::Collecting || status.phase == DeltaPhase::PlanReady ||
+                                   status.phase == DeltaPhase::Transferring || status.phase == DeltaPhase::Verifying) {
+                            pendingSession = true;
+                            activeStatus = status;
+                            r.resumeSession = hex(checkpoint->session);
+                        } else throw std::runtime_error("session not resumable; retry after server recovery");
+                    }
+                    if (!sourceMatches) saved = {}; // Only obsolete completed receipts reach here.
+                }
+                const bool useResume = automatic || config.mode == "resume" || config.resume;
+                if (!preview) {
+                    if (automatic) {
+                        const auto &p = pins.at(r.logicalPath);
+                        const bool plannedResume = p.strategy == BackupStrategy::Resume;
+                        if (p.strategy == BackupStrategy::Error || !p.modeAllowed ||
+                            plannedResume != pendingSession ||
+                            (plannedResume && p.resumeSession != r.resumeSession))
+                            throw std::runtime_error("session or strategy changed after preview; scan again");
+                        if ((p.strategy == BackupStrategy::Full && p.baseVersion != "absent") ||
+                            ((p.strategy == BackupStrategy::Incremental || p.strategy == BackupStrategy::Skip) &&
+                             p.baseVersion == "absent"))
+                            throw std::runtime_error("invalid pinned strategy baseline");
+                        identity["mode"] = p.strategy == BackupStrategy::Full ? "full" : "incremental";
+                        if (plannedResume) {
+                            // QUERY verifies the session; Preview also verifies the
+                            // current remote baseline before sending resumed data.
+                            DeltaOptions checkBase = options;
+                            checkBase.mode = DeltaMode::Preview;
+                            checkBase.save = [](const DeltaCheckpoint &) {};
+                            Peer baselinePeer(config.port, control);
+                            (void)runDelta(source, [&](const Frame &f) { return baselinePeer.request(f); }, checkBase);
                         }
                     }
-                    if (preview && config.mode == "full" && saved.value("completed").toBool() &&
-                        previousSource == currentSource) {
-                        ownCompletedFull = true;
-                        options.base.kind = BaseSelector::Kind::Auto;
-                    }
-                    if (!preview) {
-                        if (previous != identity) {
-                            if (saved.value("completed").toBool())
-                                saved = {};
-                            else
-                                throw std::runtime_error("pending checkpoint baseline mismatch; "
-                                                         "retry the original preview");
-                        } else
-                            options.resume = DeltaCheckpoint{
-                                id(saved.value("session").toString()),
-                                saved.value("base").toString() == "absent"
-                                    ? std::optional<VersionId>{}
-                                    : std::optional<VersionId>{id(saved.value("base").toString())}};
+                    if (config.mode == "resume" && !pendingSession && !committedSession)
+                        throw std::runtime_error("no valid resume session");
+                    if (pendingSession) {
+                        if (!useResume || (config.mode == "full" && savedMode != "full"))
+                            throw std::runtime_error("matching pending checkpoint requires resume mode");
+                        if (!pins.at(r.logicalPath).resumeSession.isEmpty() &&
+                            pins.at(r.logicalPath).resumeSession != r.resumeSession)
+                            throw std::runtime_error("pending checkpoint changed after preview");
+                        identity["mode"] = savedMode;
+                        options.resume = checkpoint;
                     }
                 }
+                const bool noUpload = !preview && !pendingSession &&
+                    pins.at(r.logicalPath).advice == BackupAdvice::Unchanged;
+                if (noUpload) {
+                    options.mode = DeltaMode::Preview;
+                    options.resume.reset();
+                }
+                if (!preview && config.mode == "full" &&
+                    pins.at(r.logicalPath).baseVersion != "absent" && (!ownCompletedFull || !noUpload))
+                    throw std::runtime_error("full upload target exists; select incremental mode or a new destination");
+                if (!preview && config.mode == "resume" && committedSession && !pendingSession && !noUpload)
+                    throw std::runtime_error("no valid resume session; committed session requires a fresh preview");
                 options.save = [&](const DeltaCheckpoint &cp) {
-                    if (preview)
+                    if (options.mode == DeltaMode::Preview)
                         return;
                     saved = {{"identity", identity},
                              {"session", hex(cp.session)},
@@ -610,7 +679,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                                                              : "正在请求上传计划";
                         emitProgress(phase, f.type == 30);
                         auto reply = peer.request(f);
-                        if (!preview && reply.type == 20) {
+                        if (options.mode == DeltaMode::Upload && reply.type == 20) {
                             auto p = decodePlanPage(reply.payload);
                             if (!historyPlan)
                                 historyPlan.emplace(id(saved.value("session").toString()),
@@ -621,7 +690,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                                                     r.size, config.chunkSize);
                             historyPlan->append(p);
                         }
-                        if (!preview && reply.type == 21) {
+                        if (options.mode == DeltaMode::Upload && reply.type == 21) {
                             auto p = decodePlanDone(reply.payload);
                             if (!historyPlan)
                                 historyPlan.emplace(id(saved.value("session").toString()),
@@ -638,7 +707,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                             atomicJson(statePath, saved);
                             adjustTotal(p.missingBytes);
                         }
-                        if (!preview && f.type == 28 && reply.type == 29) {
+                        if (options.mode == DeltaMode::Upload && f.type == 28 && reply.type == 29) {
                             auto status = decodeDeltaStatus(reply.payload);
                             if (status.phase == DeltaPhase::Committed)
                                 adjustTotal(0);
@@ -671,31 +740,75 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                     options);
                 r.baseVersion =
                     outcome.plan.baseVersion ? hex(*outcome.plan.baseVersion) : "absent";
-                if (preview && ownCompletedFull && outcome.plan.baseVersion &&
-                    outcome.plan.changeKind != "Unchanged")
-                    throw std::runtime_error("full upload target changed since this task committed; "
-                                             "use incremental mode or a different destination");
+                if (pendingSession && outcome.plan.baseVersion != checkpoint->base)
+                    throw std::runtime_error("pending checkpoint baseline changed; use a new destination or recover original version");
+                const bool unchanged = outcome.plan.baseVersion && outcome.plan.changeKind == "Unchanged" &&
+                                       outcome.plan.missingBlocks == 0;
+                r.advice = pendingSession ? BackupAdvice::Resume : !outcome.plan.baseVersion ? BackupAdvice::Full
+                           : unchanged ? BackupAdvice::Unchanged : BackupAdvice::Incremental;
+                r.modeAllowed = config.mode == "resume" ? (pendingSession || (committedSession && unchanged))
+                    : config.mode == "full" ? (pendingSession ? useResume && savedMode == "full"
+                        : !outcome.plan.baseVersion || (ownCompletedFull && unchanged))
+                    : !pendingSession || useResume;
+                r.strategy = !r.modeAllowed ? BackupStrategy::Error : pendingSession ? BackupStrategy::Resume
+                    : !outcome.plan.baseVersion ? BackupStrategy::Full
+                    : unchanged ? BackupStrategy::Skip : BackupStrategy::Incremental;
+                if (!preview && automatic && r.strategy != pins.at(r.logicalPath).strategy)
+                    throw std::runtime_error("strategy changed after preview; scan again");
+                if (noUpload && !unchanged)
+                    throw std::runtime_error("source or baseline changed after preview; scan again");
                 r.missingBytes = outcome.plan.missingBytes;
                 r.changedBlocks = outcome.plan.missingBlocks;
+                if (preview && activeStatus &&
+                    (activeStatus->phase == DeltaPhase::Transferring || activeStatus->phase == DeltaPhase::Verifying)) {
+                    const auto bitmap = QByteArray::fromHex(QByteArray::fromStdString(activeStatus->missingBitmap));
+                    const auto blocks = (r.size + config.chunkSize - 1) / config.chunkSize;
+                    if (quint64(bitmap.size()) != (blocks + 7) / 8)
+                        throw std::runtime_error("invalid resume bitmap geometry");
+                    r.missingBytes = r.changedBlocks = 0;
+                    for (quint64 i = 0; i < quint64(bitmap.size()) * 8; ++i)
+                        if (static_cast<unsigned char>(bitmap[qsizetype(i/8)]) & (1U << (i%8))) {
+                            if (i >= blocks) throw std::runtime_error("invalid resume bitmap padding");
+                            ++r.changedBlocks;
+                            r.missingBytes += std::min<quint64>(config.chunkSize, r.size - i*config.chunkSize);
+                        }
+                }
                 r.change = outcome.plan.changeKind == "Added"       ? "新增"
                            : outcome.plan.changeKind == "Unchanged" ? "未变化"
                                                                     : "已修改";
                 r.status = preview ? "就绪" : "已完成";
                 r.note = preview
-                             ? QString("变化 %1 块，预计上传 %2 字节")
+                             ? QString(pendingSession ? "续传尚需 %1 块，预计上传 %2 字节" : "变化 %1 块，预计上传 %2 字节")
                                    .arg(r.changedBlocks)
                                    .arg(r.missingBytes)
                              : QString("服务端已确认提交，本轮发送 %1 块").arg(outcome.sentBlocks);
-                if (preview)
+                if (preview) {
                     progress.totalBytes += r.missingBytes;
-                else {
-                    if (!outcome.result)
-                        throw std::runtime_error("server did not commit");
+                    if (!r.modeAllowed) {
+                        r.status = "模式不匹配";
+                        r.note += config.mode == "resume" ? "；没有可续传的未完成会话，请按建议重新选择模式并扫描。"
+                            : pendingSession ? "；存在匹配未完成会话，请选择断点续传（或启用自动续传）。"
+                            : "；首次上传保护已有目标，请选择增量备份或新的远端路径。";
+                        entry(r);
+                        ++result.failed;
+                        continue;
+                    }
+                } else if (noUpload) {
+                    r.status = "已跳过";
+                    r.note = "已重新核验源摘要及服务器固定版本，无需上传。";
+                    r.versionId.clear(); // No new COMMIT; do not manufacture a history receipt.
+                    ++result.skipped;
+                    ++progress.completedFiles;
+                    entry(r);
+                    log("信息", r.logicalPath + "：" + r.note);
+                    continue;
+                } else {
+                    if (!r.modeAllowed || !outcome.result)
+                        throw std::runtime_error("server did not commit or mode no longer allowed");
                     if (options.resume || saved.contains("plan")) {
                         const auto note = r.note;
                         restorePlan(r, saved);
-                        if (r.change != "未知")
-                            r.note = note;
+                        if (r.change != "未知") r.note = note;
                     }
                     r.versionId = hex(outcome.result->versionId);
                     r.time = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -713,12 +826,15 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                 r.versionId.clear();
                 r.status = "错误";
                 r.change = "错误";
+                r.modeAllowed = false;
+                r.strategy = BackupStrategy::Error;
                 r.note = friendly(e);
                 entry(r);
                 log("错误", r.logicalPath + "：" + r.note);
                 ++result.failed;
             }
         }
+        result.planComplete = preview;
     } catch (const std::exception &e) {
         if (control.cancelled) {
             result.cancelled = true;

@@ -29,7 +29,8 @@ int main() {
     connection->setCloseCallback([&](const auto&) { loop.quit(); });
     connection->start();
     const std::string bulk(512 * 1024, 'x'); connection->send(bulk);
-    if (!connection->readPaused() || connection->stats().wouldBlockWrites == 0) return 2;
+    if (!connection->readPaused() || connection->stats().wouldBlockWrites == 0 ||
+        connection->idleTimeoutSuspended()) return 2;
     std::string received;
     bool tailSent = false;
     std::thread peer([&] {

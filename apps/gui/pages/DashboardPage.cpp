@@ -25,7 +25,7 @@ DashboardPage::DashboardPage(TransferController *controller, WorkspaceStore *sto
         values << label;
     }
     layout_->addLayout(cards);
-    values[0]->setText(tr("尚未连接"));
+    values[0]->setText(transport->healthStateText());
     auto *lower = new QHBoxLayout;
     auto *tasks = new InfoCard(tr("最近备份"), this);
     auto *activity = new InfoCard(tr("最近活动"), this);
@@ -73,13 +73,10 @@ DashboardPage::DashboardPage(TransferController *controller, WorkspaceStore *sto
     connect(controller, &TransferController::finished, this,
             [=](const QString &s, bool) { values[2]->setText(s); });
     connect(transport, &QtTcpTransport::statusChanged, this, [=](const QString &s) {
-        values[0]->setText(tr("离线 / 正在检查"));
         values[0]->setToolTip(s);
     });
-    connect(transport, &QtTcpTransport::ready, this, [=] {
-        values[0]->setText(tr("在线"));
-        values[0]->setToolTip(tr("服务器协议握手成功"));
+    connect(transport, &QtTcpTransport::healthChanged, this, [=] {
+        values[0]->setText(transport->healthStateText());
     });
-    connect(transport, &QtTcpTransport::failed, this, [=] { values[0]->setText(tr("离线")); });
     refresh();
 }

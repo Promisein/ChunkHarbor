@@ -33,6 +33,9 @@ public:
     int fd() const noexcept { return fd_.get(); }
     bool closed() const noexcept { return closed_; }
     bool readPaused() const noexcept { return readPaused_ || applicationPaused_; }
+    // Trusted application work is in flight; slow-peer backpressure and an
+    // error response draining after shutdownAfterWrite still expire normally.
+    bool idleTimeoutSuspended() const noexcept { return applicationPaused_ && !readEof_; }
     const Stats& stats() const noexcept { return stats_; }
     std::chrono::steady_clock::time_point lastActivity() const noexcept { return lastActivity_; }
 private:

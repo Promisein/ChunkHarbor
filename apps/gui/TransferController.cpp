@@ -2,6 +2,7 @@
 #include "WorkspaceStore.h"
 #include <QDir>
 #include <QMetaObject>
+#include <algorithm>
 namespace {
 bool sameConfiguration(const gui::BackupConfig &a, const gui::BackupConfig &b) {
     return QDir::cleanPath(a.directory) == QDir::cleanPath(b.directory) && a.prefix == b.prefix &&
@@ -28,10 +29,16 @@ void TransferController::scan(gui::BackupConfig config) {
     if (busy_)
         return;
     model_->clear();
-    pinned_.clear();
-    previewReady_ = false;
-    emit previewReady(false);
+    invalidatePreview();
     launch(std::move(config), true);
+}
+void TransferController::invalidatePreview() {
+    if (busy_) return;
+    previewReady_ = false;
+    pinned_.clear();
+    recommendation_ = tr("配置已更改或尚未扫描，请重新扫描以核验服务器状态。 ");
+    emit previewReady(false);
+    emit recommendationChanged(recommendation_);
 }
 void TransferController::start(gui::BackupConfig config) {
     if (busy_)
@@ -47,7 +54,9 @@ void TransferController::start(gui::BackupConfig config) {
 void TransferController::retry() {
     if (busy_)
         return;
-    launch(lastConfig_, lastPreview_);
+    // Some files may already have committed: the previous baseline is stale.
+    // Refresh the plan and require the usual explicit Start confirmation.
+    scan(lastConfig_);
 }
 void TransferController::pauseOrResume() {
     if (!busy_ || !control_)
@@ -76,7 +85,6 @@ void TransferController::launch(gui::BackupConfig config, bool preview) {
     }
     config.stateDirectory = stateDirectory();
     lastConfig_ = config;
-    lastPreview_ = preview;
     busy_ = true;
     control_ = std::make_shared<gui::RunControl>();
     emit busyChanged(true);
@@ -120,12 +128,26 @@ void TransferController::launch(gui::BackupConfig config, bool preview) {
                 busy_ = false;
                 bool success = !result.cancelled && result.failed == 0;
                 if (preview) {
-                    previewReady_ = success;
+                    recommendation_ = result.cancelled ? tr("扫描已取消，建议无效，请重新扫描。")
+                        : result.failed && !result.planComplete ? tr("核验失败，扫描未完成，暂不能提供可靠计划，请检查日志并重新扫描。")
+                        : gui::modeRecommendation(model_->records(), config.mode == "auto");
+                    emit recommendationChanged(recommendation_);
+                    // Only a complete directory scan can authorize a partial auto plan.
+                    const auto rows = model_->records();
+                    const bool hasSafeFile = std::any_of(rows.begin(), rows.end(), [](const auto &r) {
+                        return r.modeAllowed && r.strategy != gui::BackupStrategy::Error;
+                    });
+                    previewReady_ = success || (config.mode == "auto" && !result.cancelled &&
+                                               result.planComplete && hasSafeFile);
                     previewConfig_ = config;
-                    if (success)
+                    if (previewReady_)
                         pinned_ = model_->records();
-                } else if (success)
+                } else {
                     previewReady_ = false;
+                    pinned_.clear();
+                    recommendation_ = tr("任务已结束，请重新扫描以更新服务器版本及会话建议。 ");
+                    emit recommendationChanged(recommendation_);
+                }
                 emit busyChanged(false);
                 emit pausedChanged(false);
                 emit previewReady(previewReady_);

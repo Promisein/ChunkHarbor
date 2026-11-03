@@ -7,7 +7,13 @@ using namespace chunkharbor::protocol;
 constexpr qint64 HandshakeLimit = HeaderSize + MaxHandshakePayload;
 constexpr qint64 ControlLimit = HeaderSize + MaxControlPayload;
 }
-QtTcpTransport::QtTcpTransport(QObject *parent) : QObject(parent), socket_(this), timer_(this) {
+QtTcpTransport::QtTcpTransport(QObject *parent)
+    : QObject(parent), socket_(this), timer_(this), healthTimer_(this) {
+    healthTimer_.setSingleShot(true);
+    healthTimer_.setInterval(15000);
+    connect(&healthTimer_, &QTimer::timeout, this, [this] {
+        connectToServer(healthHost_, healthPort_);
+    });
     timer_.setSingleShot(true);
     connect(&timer_, &QTimer::timeout, this, [this] {
         fail(handshaken_ ? tr("服务器响应超时（10 秒）。") : tr("连接或握手超时（5 秒）。"));
@@ -26,14 +32,13 @@ QtTcpTransport::QtTcpTransport(QObject *parent) : QObject(parent), socket_(this)
         fail(tr("连接失败：%1").arg(socket_.errorString()));
     });
     connect(&socket_, &QTcpSocket::disconnected, this, [this] {
-        if (terminal_) {
-            if (handshaken_ && !requestMode_) emit statusChanged(tr("连接已断开，请重新连接以检查服务器。"));
-            return;
-        }
+        if (terminal_) return; // Completed/cancelled probes intentionally close their socket.
         fail(tr("服务器在响应完成前断开连接。"));
     });
 }
 void QtTcpTransport::connectToServer(const QString &host, quint16 port) {
+    healthHost_ = host;
+    healthPort_ = port;
     Hello offer;
     offer.clientName = "chunkharbor-gui";
     start(host, port, std::move(offer), false);
@@ -47,6 +52,7 @@ void QtTcpTransport::start(const QString &host, quint16 port, Hello offer, bool 
     handshaken_ = false;
     socket_.abort();
     timer_.stop();
+    healthTimer_.stop();
     received_.clear();
     lastError_.clear();
     requestMode_ = requestMode;
@@ -55,9 +61,24 @@ void QtTcpTransport::start(const QString &host, quint16 port, Hello offer, bool 
     socket_.setReadBufferSize(HandshakeLimit + 1);
     exchange_.emplace(std::move(offer));
     terminal_ = false;
+    setHealthState(requestMode ? HealthState::Unchecked : HealthState::Checking);
     emit statusChanged(tr("正在连接…"));
     timer_.start(5000);
     socket_.connectToHost(host, port);
+}
+void QtTcpTransport::setHealthState(HealthState state) {
+    if (state == healthState_) return;
+    healthState_ = state;
+    emit healthChanged();
+}
+QString QtTcpTransport::healthStateText() const {
+    switch (healthState_) {
+    case HealthState::Unchecked: return tr("未检查");
+    case HealthState::Checking: return tr("检查中");
+    case HealthState::Reachable: return tr("可达");
+    case HealthState::Unreachable: return tr("不可达");
+    }
+    return {};
 }
 bool QtTcpTransport::supportsCapability(const std::string &capability) const {
     if (!handshaken_ || !exchange_) return false;
@@ -89,9 +110,11 @@ void QtTcpTransport::disconnectFromServer() {
     handshaken_ = false;
     awaiting_ = false;
     timer_.stop();
+    healthTimer_.stop();
     exchange_.reset();
     socket_.abort();
     received_.clear();
+    setHealthState(HealthState::Unchecked);
     emit statusChanged(tr("连接设置已更改，请重新检查连接。"));
 }
 void QtTcpTransport::fail(const QString &message) {
@@ -100,6 +123,10 @@ void QtTcpTransport::fail(const QString &message) {
     timer_.stop();
     lastError_ = message;
     socket_.abort();
+    if (!requestMode_) {
+        healthTimer_.start();
+        setHealthState(HealthState::Unreachable);
+    }
     emit statusChanged(message);
     emit failed();
 }
@@ -125,7 +152,15 @@ void QtTcpTransport::receive() {
             handshaken_ = true;
             terminal_ = !requestMode_;
             timer_.stop();
-            emit statusChanged(tr("协议握手成功（版本 1），当前仅验证连接。"));
+            if (!requestMode_) {
+                // Mark terminal before closing: disconnected is transport cleanup,
+                // not a failed health check. Request mode keeps its live socket.
+                socket_.abort();
+                healthTimer_.start();
+                setHealthState(HealthState::Reachable);
+            }
+            emit statusChanged(requestMode_ ? tr("协议握手成功（版本 1）。")
+                : tr("最近一次 HELLO 检查成功；15 秒后复查，单次超时 5 秒。备份和列表使用独立连接。"));
             emit ready();
         } else {
             if (!awaiting_ || result.frame.requestId != lastRequestId_ ||

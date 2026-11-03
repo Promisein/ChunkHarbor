@@ -169,12 +169,20 @@ try:
         code, r = result(command(state='cancel', prefix='cancel', operation='cancel'))
         assert code != 0 and not r['success'], r
         code, r = result(command(state='cancel', prefix='cancel', mode='resume'))
+        # The batch also contains a not-yet-started file: strict Resume must
+        # never silently create a new upload for it. Confirm a new mixed plan.
+        assert code == 2 and not r['success'] and any(
+            row['status'] == '模式不匹配' and row['advice'] == 'full' for row in r['rows']), r
+        code, r = result(command(state='cancel', prefix='cancel', mode='incremental'))
         assert code == 0 and r['success'], r
         verify(file, 'cancel/source.bin')
-        print('pause/cancel and reopen Resume mode: passed', flush=True)
+        print('pause/cancel mixed batch: strict Resume refused new file; confirmed incremental recovery passed', flush=True)
         code, r = result(command(state='close', prefix='close', operation='close'))
         assert code != 0 and not r['success'], r
         code, r = result(command(state='close', prefix='close', mode='resume'))
+        assert code == 2 and not r['success'] and any(
+            row['status'] == '模式不匹配' and row['advice'] == 'full' for row in r['rows']), r
+        code, r = result(command(state='close', prefix='close', mode='incremental'))
         assert code == 0 and r['success'], r
         verify(file, 'close/source.bin')
         print('close window cooperatively and reopen/continue: passed', flush=True)
