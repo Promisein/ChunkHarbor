@@ -1,5 +1,13 @@
 # ChunkHarbor 开发进度
 
+## R1 发布与 Linux 原工程同步（2026-11-03）
+
+- 用户明确授权提交、推送GitHub并同步Linux虚拟机。R1功能提交为 `83453c4ba134719af4f7ded3e875c986fd8d3488`；发布文档随后作为独立提交，最终版本以Git HEAD核对为准。
+- Windows Qt构建成功；`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure` **23/23通过**。原生鼠标测试本轮未运行；此前完整CTest为23/24，用户已人工确认下拉框，失败记录仍保留。
+- Ubuntu `/home/ning/ChunkHarbor` 使用Git bundle将原工程从 `31e5d3a` 快进到R1功能提交，复用原build，GUI=OFF。配置和构建完成，`ctest --test-dir build --output-on-failure` 日志显示 **51/51通过**（38.82秒）。远程包装命令在测试结束后因shell退出码转义错误返回非零；独立检查构建与完整CTest日志确认上述结果。
+- 同步前Ubuntu七项未提交改动已归档于 `stash@{0}`，对象 `612176dd803aa076c0ca688ead0d4e7d88f2f14a`；逐文件比较规范化SHA-256，审计保存在原仓库 `.git/codex-pre-r1-publish-audit.json`，此前stash保留。构建目录及真实备份数据不进入提交；未重启用户服务。
+- GitHub main 和两端最终提交需发布后核验；本轮没有启动R2。具体阶段验收例外和历史测试详见下方R1记录。
+
 ## R1 阶段完成并关闭（2026-11-03，用户确认验收）
 
 - **完成状态**：用户已自行验证下拉框，确认未发现实际交互故障，并明确要求结束R1剩余事项。结合前轮源码、构建、自动化与真实SSH证据，R1按当前约定范围完成；下方各轮“未验收/剩余”描述保留为当时历史，以本条最新状态为准。

@@ -1,5 +1,11 @@
 # Ubuntu主工程同步（2026-11-02）
 
+## R1功能同步与验证（2026-11-03）
+
+用户授权发布及同步。Ubuntu原工程以Git bundle快进至R1功能提交 `83453c4ba134719af4f7ded3e875c986fd8d3488`，复用 `/home/ning/ChunkHarbor/build`，GUI=OFF；配置、构建成功，完整CTest日志 **51/51通过**。远程包装命令在测试结束后因shell退出码转义错误返回非零，已独立检查构建和CTest日志。日志保存在build/r1-publish-{configure,build,ctest}.log。
+
+同步前七项未提交改动已存为stash对象 `612176dd803aa076c0ca688ead0d4e7d88f2f14a` 并逐文件哈希核验，原有stash、构建缓存和备份数据保留；未重启服务。发布文档随后同步，最终三端版本以Git HEAD核对为准。Windows非原生桌面测试23/23通过，原生输入自动测试的历史失败及用户人工验收例外见PROGRESS。
+
 ## 最新：M6已发布GitHub并以Git提交同步（2026-11-02）
 
 用户明确授权发布。功能提交`b6b62ab`（M6分页、Linux下载、GUI文件列表、重扫/布局修复）已推送GitHub main；Ubuntu原`/home/ning/ChunkHarbor`用Git bundle导入对象并执行`git merge --ff-only origin/main`，不是无版本覆盖源码。后续文档提交同样快进同步，三端以最终HEAD核对为准。原工程日常入口和build目录不变。

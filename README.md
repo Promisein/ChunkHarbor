@@ -2,7 +2,7 @@
 
 后续开发需求已冻结，采用 [R1–R8 路线图](docs/ROADMAP_V3.md)：单用户可靠性 → 单服务器多用户隔离 → 性能与规模验证。M0–M7 保留为原始历史编号。当前源码、跨机器版本及验证边界见 [2026-11-03 审计](docs/PROJECT_AUDIT_2026-11-03.md)，每轮状态见 [PROGRESS 顶部](docs/PROGRESS.md)。
 
-R1已于2026-11-03按用户确认完成，当前进入R1发布与跨平台同步；R2尚未启动。最新提交、同步和验证记录见 [PROGRESS](docs/PROGRESS.md) 与 [Ubuntu同步记录](docs/UBUNTU_SYNC.md)。
+R1已于2026-11-03按用户确认完成；R2尚未启动。R1功能、跨平台同步与验证记录见 [PROGRESS](docs/PROGRESS.md) 与 [Ubuntu同步记录](docs/UBUNTU_SYNC.md)。
 
 C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。M6已支持Linux CLI单文件下载校验恢复；GUI恢复、TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
 
