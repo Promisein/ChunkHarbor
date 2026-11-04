@@ -1,4 +1,6 @@
 #pragma once
+#include "chunkharbor/protocol/DirectorySnapshot.h"
+#include "chunkharbor/protocol/VersionHistory.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -22,6 +24,11 @@ class SqliteStore {
     std::optional<VersionRecord> currentVersion(std::string_view path) const;
     // Caller holds the storage DB mutex. At most limit rows; no filesystem I/O.
     std::vector<VersionRecord> listCurrentFiles(std::string_view afterPath, std::uint32_t limit) const;
+    protocol::VersionsResult listVersions(const protocol::ListVersions &) const;
+    protocol::SnapshotInfo createSnapshot(const std::string &id, const std::string &root);
+    protocol::SnapshotInfo getSnapshot(const std::string &id) const;
+    protocol::SnapshotsPage listSnapshots(const protocol::ListSnapshots &) const;
+    protocol::SnapshotEntriesPage listSnapshotEntries(const protocol::ListSnapshotEntries &) const;
     void registerVersion(const VersionRecord &);
     bool compareAndSetCurrent(std::string_view path, const std::optional<std::string> &expected,
                               std::string_view replacement);

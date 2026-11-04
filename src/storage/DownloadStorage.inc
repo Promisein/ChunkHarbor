@@ -6,14 +6,34 @@ struct DownloadSession {
     UniqueFd data;
     std::mutex mutex;
 };
-OpenedDownload UploadStorage::openDownload(const protocol::BeginDownload &request) {
-    protocol::encodeBeginDownload(request);
+OpenedDownload UploadStorage::openDownload(const protocol::BeginDownload &request,
+                                           protocol::DownloadSelection selection) {
+    const bool historical = selection == protocol::DownloadSelection::Historical;
+    if (historical)
+        protocol::encodeBeginHistoricalDownload(request);
+    else
+        protocol::encodeBeginDownload(request);
     auto &i = *impl_;
     VersionRecord version;
     bool immutable = false;
     {
         std::lock_guard<std::mutex> guard(i.dbMutex);
-        if (auto current = i.db->currentVersion(request.path)) {
+        if (historical) {
+            // Only published ledger entries qualify. Legacy commits have their own
+            // immutable object even before the versions table is populated.
+            DStmt q(i.db->nativeHandle(),
+                    "SELECT COALESCE(v.size,t.total_size,-1),COALESCE(v.sha256,t.expected_sha256,'') "
+                    "FROM version_history h LEFT JOIN versions v ON v.id=h.version_id AND v.path=h.path "
+                    "LEFT JOIN transfers t ON t.session_id=h.version_id AND t.logical_path=h.path "
+                    "AND t.state='COMMITTED' WHERE h.version_id=? AND h.path=?");
+            q.text(1, request.versionId).text(2, request.path);
+            if (!q.row()) fail("VERSION_NOT_FOUND", "No published version at the requested path");
+            const auto size = q.number(0);
+            if (size < 0 || static_cast<std::uint64_t>(size) > protocol::MaxDownloadFileSize)
+                fail("VERSION_UNAVAILABLE", "Historical size metadata is unavailable or invalid");
+            version = {request.versionId, request.path, static_cast<std::uint64_t>(size), 0, q.str(1)};
+            immutable = true;
+        } else if (auto current = i.db->currentVersion(request.path)) {
             version = *current;
             immutable = true;
         } else {
@@ -30,11 +50,17 @@ OpenedDownload UploadStorage::openDownload(const protocol::BeginDownload &reques
     auto session = std::make_shared<DownloadSession>();
     session->owner = impl_.get();
     session->ready = {request.path, version.id, version.size, version.sha256};
-    protocol::encodeDownloadReady(session->ready);
-    // Open existing paths only: never create directories or materialize legacy data.
-    session->data = immutable
-        ? regularFile(i.root.get(), ".versions/" + version.id + "/data", O_RDONLY)
-        : regularFile(i.files.get(), request.path, O_RDONLY);
+    try {
+        protocol::encodeDownloadReady(session->ready);
+        // Open existing paths only. An exact historical request never reads files/.
+        session->data = immutable
+            ? regularFile(i.root.get(), ".versions/" + version.id + "/data", O_RDONLY)
+            : regularFile(i.files.get(), request.path, O_RDONLY);
+    } catch (const protocol::UploadFailure &) {
+        if (historical)
+            fail("VERSION_UNAVAILABLE", "Historical metadata or immutable object is unavailable");
+        throw;
+    }
     struct stat st{};
     io(::fstat(session->data.get(), &st) == 0);
     if (st.st_size < 0 || static_cast<std::uint64_t>(st.st_size) != version.size ||

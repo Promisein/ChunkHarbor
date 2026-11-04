@@ -59,6 +59,10 @@ def check(case):
                         kind, rid, hello = request(peer)
                         assert kind == 1 and rid == 1 and hello['capabilities'] == ['handshake', 'file_list_v1']
                         caps = ['handshake'] if case == 'no_capability' else ['handshake', 'file_list_v1']
+                        if case == 'no_capability':
+                            # Keep this rejection in flight for multiple 10ms UI pulses,
+                            # just like the delayed list responses below.
+                            time.sleep(.04)
                         peer.sendall(frame(2, rid, dict(version=1, server_name='files-peer', capabilities=caps,
                                                       max_control_payload=65536, max_data_payload=1048576)))
                         if case == 'no_capability':
@@ -117,12 +121,14 @@ def check(case):
         assert result['heartbeat'] >= 1, (case, result)
         if case == 'pages':
             assert calls == ['', '中文/<b>.txt', '']
+            assert result['page_numbers'] == ['1', '2', '1']
             assert result['pages'] == [['a', '中文/<b>.txt'], ['龘'], ['a', '中文/<b>.txt']]
             assert result['display_size'] == '9007199254740993'
             assert result['visible'] == 1 and result['plain'] and '<b>' in result['detail']
             assert '<b>' not in result['tooltip'] and '&lt;b&gt;' in result['tooltip']
             assert result['next'] and not result['previous'] and not result['restore']
         elif case in ('retain', 'nonadvance'):
+            assert result['page_numbers'] == ['1', '1']
             assert not result['success'] and [f['path'] for f in result['rows']] == ['a', '中文/<b>.txt']
             assert '上次结果' in result['status'] and result['next'] and not result['previous']
         elif case in ('cancel', 'endpoint'):

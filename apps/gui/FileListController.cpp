@@ -36,6 +36,10 @@ FileListController::FileListController(QObject *parent)
                 if (history_.size() > 128) history_.pop_front();
             } else history_.pop_back();
             cursor_ = pendingCursor_;
+            // Display ordinal only: the server cursor remains the pagination authority.
+            if (action_ == Action::Refresh) pageNumber_ = 1;
+            else if (action_ == Action::Next) ++pageNumber_;
+            else if (pageNumber_ > 1) --pageNumber_;
             model_.setPage(std::move(page));
             hasPage_ = true;
             busy_ = false;
@@ -60,6 +64,7 @@ void FileListController::setEndpoint(const QString &host, quint16 port) {
     pendingCursor_.clear();
     model_.setPage({});
     hasPage_ = false;
+    pageNumber_ = 1;
     status_ = tr("连接设置已更改，请刷新列表。旧服务器结果已清空。");
     emit changed();
 }

@@ -1,6 +1,9 @@
 #pragma once
 #include "chunkharbor/protocol/UploadControl.h"
 namespace chunkharbor::protocol {
+inline constexpr char HistoricalDownloadCapability[] = "historical_download_v1";
+inline constexpr std::uint16_t BeginHistoricalDownloadType = 36;
+enum class DownloadSelection { Current, Historical };
 constexpr std::uint32_t MaxDownloadChunkSize = 256 * 1024;
 constexpr std::uint64_t MaxDownloadFileSize = 64ULL * 1024 * 1024;
 struct BeginDownload { std::string path, versionId; }; // empty version: current
@@ -24,6 +27,8 @@ struct DownloadChunk {
 // with version ID replacing session ID; these functions perform no I/O/hashing.
 std::string encodeBeginDownload(const BeginDownload &);
 BeginDownload decodeBeginDownload(std::string_view);
+std::string encodeBeginHistoricalDownload(const BeginDownload &);
+BeginDownload decodeBeginHistoricalDownload(std::string_view);
 std::string encodeDownloadReady(const DownloadReady &);
 DownloadReady decodeDownloadReady(std::string_view);
 std::string encodeGetDownloadChunk(const GetDownloadChunk &);

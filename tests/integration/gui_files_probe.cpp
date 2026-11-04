@@ -8,7 +8,6 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPalette>
-#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -55,6 +54,7 @@ int main(int argc, char **argv) {
     QObject::connect(&pulse, &QTimer::timeout, &app, [&] { ++heartbeat; });
     pulse.start();
     QJsonArray pages;
+    QJsonArray pageNumbers;
     auto output = [&](bool success) {
         QJsonArray rows;
         if (window) {
@@ -63,7 +63,8 @@ int main(int argc, char **argv) {
                                         {"size", QString::number(static_cast<qulonglong>(f.size))},
                                         {"sha256", QString::fromStdString(f.sha256)}});
         }
-        QJsonObject result{{"success", success}, {"rows", rows}, {"pages", pages}, {"heartbeat", heartbeat}};
+        QJsonObject result{{"success", success}, {"rows", rows}, {"pages", pages},
+                           {"page_numbers", pageNumbers}, {"heartbeat", heartbeat}};
         if (window) {
             result["busy"] = controller->busy();
             result["status"] = window->findChild<QLabel *>("filesStatus")->text();
@@ -75,18 +76,13 @@ int main(int argc, char **argv) {
             if (controller->model()->rowCount()) {
                 result["display_size"] = controller->model()->data(controller->model()->index(0, 1)).toString();
                 table->selectRow(0);
-                result["detail"] = window->findChild<QPlainTextEdit *>("fileDetails")->toPlainText();
-                result["plain"] = window->findChild<QPlainTextEdit *>("fileDetails")->isReadOnly();
+                auto *detail = window->findChild<QLabel *>("fileDetails");
+                result["detail"] = detail->property("fullText").toString();
+                result["plain"] = detail->textFormat() == Qt::PlainText;
                 result["tooltip"] = table->model()->data(table->model()->index(0, 0), Qt::ToolTipRole).toString();
             }
             if (argc > 3) {
                 QApplication::processEvents();
-                auto *detail = window->findChild<QPlainTextEdit *>("fileDetails");
-                if (controller->model()->rowCount() && detail->viewport()->height() < 4 * detail->fontMetrics().lineSpacing()) {
-                    std::cerr << "file details layout clipped" << std::endl;
-                    app.exit(68);
-                    return;
-                }
                 window->grab().save(QString::fromLocal8Bit(argv[3]));
             }
         }
@@ -98,6 +94,7 @@ int main(int argc, char **argv) {
         QJsonArray paths;
         for (const auto &f : controller->model()->page().files) paths.append(QString::fromUtf8(f.path));
         pages.append(paths);
+        pageNumbers.append(QString::number(controller->pageNumber()));
         if ((mode == "pages" || mode == "retain") && success && pages.size() == 1 && controller->hasNext()) {
             QTimer::singleShot(0, &app, [&] { button("filesNext")->click(); });
         } else if (mode == "pages" && success && pages.size() == 2) {

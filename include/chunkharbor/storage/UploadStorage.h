@@ -1,4 +1,6 @@
 #pragma once
+#include "chunkharbor/protocol/DirectorySnapshot.h"
+#include "chunkharbor/protocol/VersionHistory.h"
 #include "chunkharbor/protocol/BeginUpload.h"
 #include "chunkharbor/protocol/ChunkAck.h"
 #include "chunkharbor/protocol/SessionStatus.h"
@@ -37,8 +39,14 @@ class UploadStorage {
     QueriedUpload query(const protocol::QuerySession &);
     protocol::ChunkAck write(const UploadSessionPtr &, const protocol::DataChunk &);
     protocol::CommitResult commit(const UploadSessionPtr &, const protocol::CommitUpload &);
+    protocol::SnapshotInfo createSnapshot(const std::string &root);
+    protocol::SnapshotInfo getSnapshot(const std::string &id);
+    protocol::SnapshotsPage listSnapshots(const protocol::ListSnapshots &);
+    protocol::SnapshotEntriesPage listSnapshotEntries(const protocol::ListSnapshotEntries &);
+    protocol::VersionsResult listVersions(const protocol::ListVersions &);
     protocol::FilesResult listFiles(const protocol::ListFiles &);
-    OpenedDownload openDownload(const protocol::BeginDownload &);
+    OpenedDownload openDownload(const protocol::BeginDownload &,
+        protocol::DownloadSelection = protocol::DownloadSelection::Current);
     protocol::DownloadChunk readDownload(const DownloadSessionPtr &, const protocol::GetDownloadChunk &);
 
   private:

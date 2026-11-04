@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QLabel>
+#include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
 #include <QTcpServer>
@@ -72,28 +73,36 @@ int main(int argc, char **argv) {
         MainWindow window(nullptr, temp.filePath("workspace"));
         auto *badge = window.findChild<QLabel *>("connectionBadge");
         auto *dashboard = window.findChild<QLabel *>("dashboardMetric0");
-        check(badge->text() == "未检查", "startup must not claim offline without a check");
+        check(badge->text() == "未检测", "startup must not claim offline without a check");
         int ready = 0, failed = 0, pulses = 0;
         QTimer pulse;
         QObject::connect(&pulse, &QTimer::timeout, &window, [&] { ++pulses; });
         pulse.start(10);
         QObject::connect(window.transport(), &QtTcpTransport::ready, &window, [&] { ++ready; });
         QObject::connect(window.transport(), &QtTcpTransport::failed, &window, [&] { ++failed; });
-        window.connectToLocalServer(server.serverPort());
-        check(!badge->property("online").toBool() && badge->text() == "检查中",
+        window.findChild<QSpinBox *>("serverPort")->setValue(server.serverPort());
+        auto *detect = window.findChild<QPushButton *>("detectConnection");
+        check(detect && detect->text() == "检测连接", "explicit top bar detection action");
+        detect->click();
+        check(!detect->isEnabled() && detect->text() == "检测中", "pending probe disables detection");
+        detect->click();
+        check(!badge->property("online").toBool() && badge->text() == "检测中",
               "checking is not offline or reachable");
         waitFor([&] { return ready == 1 && closed == 1; }, 2000, "initial HELLO/close");
         QApplication::processEvents();
         check(badge->property("online").toBool(),
               "healthy HELLO followed by peer close must remain reachable, not offline");
+        check(detect->isEnabled() && detect->text() == "重新检测", "completed probe can be repeated");
         check(dashboard->text() == badge->text(), "dashboard and badge agree");
         // Listening TCP alone is insufficient: the next HELLO gets no ACK.
         silent = true;
         waitFor([&] { return requests == 2; }, 18000, "periodic HELLO start");
-        check(badge->text() == "检查中", "periodic check invalidates old success");
+        check(badge->text() == "检测中", "periodic check invalidates old success");
         waitFor([&] { return failed == 1 && closed == 2; }, 7000, "silent HELLO timeout");
-        check(!badge->property("online").toBool() && badge->text() == "不可达",
+        check(!badge->property("online").toBool() && badge->text() == "连接失败",
               "silent application must fail even when TCP accepts");
+        check(detect->isEnabled() && detect->text() == "重试检测" && !badge->toolTip().isEmpty(),
+              "failed probe offers retry and a reason");
         check(requests == 2 && pulses > 20, "bounded probes leave GUI event loop running");
         silent = false;
         waitFor([&] { return ready == 2 && closed == 3; }, 18000, "periodic recovery");
@@ -107,17 +116,17 @@ int main(int argc, char **argv) {
         auto unused = reserved.serverPort();
         reserved.close();
         window.findChild<QSpinBox *>("serverPort")->setValue(unused);
-        check(badge->text() == "未检查", "endpoint edit clears previous result");
+        check(badge->text() == "未检测", "endpoint edit clears previous result");
         QElapsedTimer cancelled;
         cancelled.start();
         waitFor([&] { return cancelled.elapsed() > 5300; }, 6000);
-        check(failed == 1 && badge->text() == "未检查" && requests == 4,
+        check(failed == 1 && badge->text() == "未检测" && requests == 4,
               "cancelled timeout cannot overwrite endpoint state or retry old endpoint");
         window.connectToLocalServer(unused);
         // Windows may retry a refused loopback connect before reporting the error;
         // the application's five-second deadline must still bound the attempt.
         waitFor([&] { return failed == 2; }, 7000, "refused connection");
-        check(badge->text() == "不可达", "connection refusal is reported");
+        check(badge->text() == "连接失败", "connection refusal is reported");
         silent = false;
         window.connectToLocalServer(server.serverPort());
         waitFor([&] { return ready == 3 && closed >= 5; }, 2000, "manual retry HELLO/close");

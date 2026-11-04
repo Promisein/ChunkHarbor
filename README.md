@@ -2,13 +2,13 @@
 
 后续开发需求已冻结，采用 [R1–R8 路线图](docs/ROADMAP_V3.md)：单用户可靠性 → 单服务器多用户隔离 → 性能与规模验证。M0–M7 保留为原始历史编号。当前源码、跨机器版本及验证边界见 [2026-11-03 审计](docs/PROJECT_AUDIT_2026-11-03.md)，每轮状态见 [PROGRESS 顶部](docs/PROGRESS.md)。
 
-R1已于2026-11-03按用户确认完成；R2尚未启动。R1功能、跨平台同步与验证记录见 [PROGRESS](docs/PROGRESS.md) 与 [Ubuntu同步记录](docs/UBUNTU_SYNC.md)。
+R1已于2026-11-03按用户确认完成。R2.1–R2.4已支持当前文件下载、历史版本查询、指定版本下载和服务端目录快照。R2.5.1支持 Windows GUI 浏览快照并生成只读恢复预览。操作和安全边界见 [R2.5.1 快照预览](docs/R2_5_1_SNAPSHOT_PREVIEW.md)。各轮实际结果见 [PROGRESS](docs/PROGRESS.md)。
 
-C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。M6已支持Linux CLI单文件下载校验恢复；GUI恢复、TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
+C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。Linux CLI及Windows GUI支持当前单文件下载校验恢复；TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
 
 M4使用、详细人工复现及自动恢复测试见[M4使用](docs/M4_USAGE.md)；真实构建/测试证据见[M4验证](docs/M4_VALIDATION.md)。旧`upload`命令保持首次上传/已有目标拒绝的语义；重复增量备份使用`backup`。版本对象与最新副本分别存储，尚无历史版本GC或总空间配额。
 
-Windows中文GUI提供总览、备份、文件、版本、日志、设置六页：后台扫描/哈希、服务端差异预览、真实确认进度、暂停/取消/恢复、本机提交历史、日志筛选导出和设置持久化。文件页已接入服务端当前文件分页、翻页/取消及当前页筛选；版本历史页仍为本机提交记录，恢复按钮禁用。构建和详细操作见[Windows使用](docs/BUILD_WINDOWS.md)，线程与模块结构见[GUI设计](docs/GUI_DESIGN.md)，验收见[M5验证](docs/M5_VALIDATION.md)和[GUI列表验证](docs/M6_GUI_FILES_VALIDATION.md)。
+Windows中文GUI提供总览、备份、文件、版本、日志、设置六页：后台扫描/哈希、服务端差异预览、真实确认进度、暂停/取消/恢复、本机提交历史、日志筛选导出和设置持久化。文件页支持当前文件分页、筛选及选中单文件下载，展示字节进度、状态并允许取消；下载绑定列表版本、逐块及整文件校验、拒绝覆盖。版本历史页保留本机提交记录，可切换到服务端历史，按逻辑路径分页查看版本和当前标记。选中版本后可下载到本地并校验发布。详见[R2.3历史恢复](docs/R2_3_HISTORY_RESTORE.md)。构建和详细操作见[Windows使用](docs/BUILD_WINDOWS.md)，下载见[R2.1](docs/R2_1_GUI_DOWNLOAD.md)，既有验收见[M5验证](docs/M5_VALIDATION.md)和[GUI列表验证](docs/M6_GUI_FILES_VALIDATION.md)。
 
 ## R1：可靠备份与自动文件计划
 
@@ -25,7 +25,7 @@ Windows中文GUI提供总览、备份、文件、版本、日志、设置六页�
 
 R1同时修复了GUI健康探测连接正常关闭造成的离线误判、服务端磁盘工作期间误判空闲导致上传断开，以及下拉框圆角外的矩形底框。健康徽标仅表示最近HELLO可达，不代替上传成功或持久确认。
 
-验证采用Windows Qt构建、业务回归与真实Windows→SSH→Ubuntu上传/重启恢复矩阵。下拉框已由用户人工确认；原生自动输入测试的失败记录和人工验收例外保留，不宣称所有自动化全绿。单文件仍限制64MiB，仅可信loopback/SSH使用；GUI下载、服务端历史查询和目录快照归R2，TLS/认证及性能扩展按后续路线推进。
+验证采用Windows Qt构建、业务回归与真实Windows→SSH→Ubuntu上传/重启恢复矩阵。下拉框已由用户人工确认；原生自动输入测试的失败记录和人工验收例外保留，不宣称所有自动化全绿。单文件仍限制64MiB，仅可信loopback/SSH使用；R2.1已接入GUI当前单文件下载，R2.2已接入服务端历史查询，目录快照继续按R2推进，TLS/认证及性能扩展按后续路线推进。
 
 ## 增量备份快速开始
 
@@ -141,4 +141,4 @@ ctest --test-dir build-windows-protocol --output-on-failure
 
 已拆分 `chunkharbor_protocol`、最小 `chunkharbor_client_core`、`chunkharbor_linux_net`。网络采用单线程 LT；多线程 Reactor 为后续可选扩展。每连接输入上限 1 MiB+32，输出上限 4 MiB，高/低水位 1 MiB/512 KiB；积压暂停读，降水位恢复读；每次事件收发有预算，连接数与空闲期有上限。容量限额不包括内核 socket 内存及短暂编码/扩容副本。
 
-未实现：GUI下载恢复、TLS/认证。Linux CLI下载不提供覆盖或下载续传。M4使用schema v2、不可变版本、固定基线和条件发布；文件系统与SQLite之间的发布窗口通过启动核验协调，不能视为跨存储原子事务。新库不能交给旧二进制；真实旧备份根升级前应先备份并审核。旧M2无数据库会话仍隔离。完整规格见[指南](CODEX_DEVELOPMENT_GUIDE.md)，当前结果见[进度](docs/PROGRESS.md)、[M4验证](docs/M4_VALIDATION.md)。
+服务端目录快照可按逻辑前缀固定已提交版本集合，详见[R2.4目录快照](docs/R2_4_DIRECTORY_SNAPSHOT.md)。目录恢复及TLS/认证仍待后续阶段。Linux CLI和Windows GUI下载均不提供覆盖或下载续传；本轮未提供Linux Qt GUI安全输出后端，Linux使用CLI下载。服务端使用schema v4及不可变版本、固定基线和条件发布；文件系统与SQLite之间的发布窗口通过启动核验协调，不能视为跨存储原子事务。新库不能交给旧二进制；真实旧备份根升级前应先备份并审核。旧M2无数据库会话仍隔离。完整规格见[指南](CODEX_DEVELOPMENT_GUIDE.md)，当前结果见[进度](docs/PROGRESS.md)、[M4验证](docs/M4_VALIDATION.md)。

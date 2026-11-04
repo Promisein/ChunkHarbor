@@ -272,6 +272,8 @@ struct UploadStorage::Impl {
                     io(st.st_size >= 0 && static_cast<std::uint64_t>(st.st_size) == b.size &&
                        hashFd(final.get(), b.size) == b.sha256);
                     sync(targetFile.first.get());
+                    // The COMMITTED transition also makes the version queryable.
+                    committedFile(t.sessionId, t.logicalPath, t.totalSize, t.expectedSha256);
                     db->setState(name, "COMMITTING", "COMMITTED");
                     cleanupSession(dir.get(), name);
                     known.erase(it);
@@ -609,6 +611,10 @@ protocol::ChunkAck UploadStorage::write(const UploadSessionPtr &s,
     }
     return ack;
 }
+protocol::VersionsResult UploadStorage::listVersions(const protocol::ListVersions &request) {
+    std::lock_guard<std::mutex> guard(impl_->dbMutex);
+    return impl_->db->listVersions(request);
+}
 protocol::FilesResult UploadStorage::listFiles(const protocol::ListFiles &request) {
     protocol::encodeListFiles(request);
     std::vector<VersionRecord> rows;
@@ -681,14 +687,14 @@ protocol::CommitResult UploadStorage::commit(const UploadSessionPtr &s,
         sync(target.first.get());
         sync(s->dir.get());
         s->result = {s->id, s->begin.path, s->begin.size, s->begin.sha256};
+        // Materialize the immutable object before publishing its history row.
+        impl_->committedFile(s->name, s->begin.path, s->begin.size, s->begin.sha256);
         record(s->receipts.get(), "COMMITTED " + protocol::encodeCommitResult(s->result));
         {
             std::lock_guard<std::mutex> dbGuard(impl_->dbMutex);
             impl_->db->setState(s->name, "COMMITTING", "COMMITTED");
             s->dbState = "COMMITTED";
         }
-        auto historical =
-            impl_->committedFile(s->name, s->begin.path, s->begin.size, s->begin.sha256);
         s->committed = true;
     } catch (...) {
         s->poisoned = true;
@@ -717,4 +723,21 @@ protocol::CommitResult UploadStorage::commit(const UploadSessionPtr &s,
 
 #include "DeltaStorage.inc"
 #include "DownloadStorage.inc"
+
+protocol::SnapshotInfo UploadStorage::createSnapshot(const std::string &root) {
+    std::lock_guard<std::mutex> guard(impl_->dbMutex);
+    return impl_->db->createSnapshot(did(randomId()), root);
+}
+protocol::SnapshotInfo UploadStorage::getSnapshot(const std::string &id) {
+    std::lock_guard<std::mutex> guard(impl_->dbMutex);
+    return impl_->db->getSnapshot(id);
+}
+protocol::SnapshotsPage UploadStorage::listSnapshots(const protocol::ListSnapshots &request) {
+    std::lock_guard<std::mutex> guard(impl_->dbMutex);
+    return impl_->db->listSnapshots(request);
+}
+protocol::SnapshotEntriesPage UploadStorage::listSnapshotEntries(const protocol::ListSnapshotEntries &request) {
+    std::lock_guard<std::mutex> guard(impl_->dbMutex);
+    return impl_->db->listSnapshotEntries(request);
+}
 } // namespace chunkharbor

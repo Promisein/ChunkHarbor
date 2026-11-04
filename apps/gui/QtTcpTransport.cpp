@@ -73,10 +73,10 @@ void QtTcpTransport::setHealthState(HealthState state) {
 }
 QString QtTcpTransport::healthStateText() const {
     switch (healthState_) {
-    case HealthState::Unchecked: return tr("未检查");
-    case HealthState::Checking: return tr("检查中");
-    case HealthState::Reachable: return tr("可达");
-    case HealthState::Unreachable: return tr("不可达");
+    case HealthState::Unchecked: return tr("未检测");
+    case HealthState::Checking: return tr("检测中");
+    case HealthState::Reachable: return tr("服务器可达");
+    case HealthState::Unreachable: return tr("连接失败");
     }
     return {};
 }

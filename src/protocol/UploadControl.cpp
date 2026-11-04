@@ -79,6 +79,9 @@ void validate(const UploadError &e) {
                                                 "SOURCE_CHANGED",
                                                 "FILE_NOT_FOUND",
                                                 "VERSION_CONFLICT",
+                                                "VERSION_NOT_FOUND",
+                                                "VERSION_UNAVAILABLE",
+                                                "SNAPSHOT_NOT_FOUND",
                                                 "INVALID_RANGE"};
     if (!codes.count(e.code) || e.message.empty() || e.message.size() > 160)
         bad();

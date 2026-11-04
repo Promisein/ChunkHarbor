@@ -36,7 +36,12 @@ void stopHere() {
         return;
     (void)::write(fd, "ready", 5);
     ::close(fd);
-    ::raise(SIGSTOP);
+    if (const auto *release = std::getenv("CH_SNAPSHOT_TEST_RELEASE")) {
+        for (int i = 0; i < 1000 && ::access(release, F_OK) != 0; ++i)
+            ::usleep(10000);
+    } else {
+        ::raise(SIGSTOP);
+    }
 }
 } // namespace
 extern "C" int renameat(int from, const char *oldName, int to, const char *newName) {
@@ -90,5 +95,20 @@ extern "C" int unlinkat(int fd, const char *name, int flags) {
     auto result = real(fd, name, flags);
     if (result == 0 && delta && chosen("after_committed_cleanup"))
         stopHere();
+    return result;
+}
+
+struct sqlite3_stmt;
+extern "C" int sqlite3_step(sqlite3_stmt *stmt) {
+    using Step = int (*)(sqlite3_stmt *);
+    using Sql = const char *(*)(sqlite3_stmt *);
+    static auto real = reinterpret_cast<Step>(::dlsym(RTLD_NEXT, "sqlite3_step"));
+    static auto sql = reinterpret_cast<Sql>(::dlsym(RTLD_NEXT, "sqlite3_sql"));
+    const int result = real(stmt);
+    if (result == 101 && chosen("snapshot_before_commit")) { // SQLITE_DONE
+        const auto *statement = sql(stmt);
+        if (statement && std::strstr(statement, "UPDATE directory_snapshots SET state='committed'"))
+            stopHere();
+    }
     return result;
 }

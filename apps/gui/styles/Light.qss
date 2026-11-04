@@ -21,7 +21,10 @@ QPushButton[primary="true"]:hover { background: #206ac5; }
 QPushButton:focus, QLineEdit:focus, QSpinBox:focus { border: 1px solid #75a8ea; }
 QLineEdit, QSpinBox { background: #fafbfc; border: 1px solid #dfe4eb; border-radius: 8px; padding: 9px; min-height: 18px; }
 QLabel#connectionBadge { background: #f1f3f6; color: #7e8796; border-radius: 12px; padding: 5px 11px; font-size: 12px; }
-QLabel#connectionBadge[online="true"] { background: #e8f5ee; color: #278258; }
+QLabel#connectionBadge[health="checking"] { background: #e8f1ff; color: #2167ba; }
+QLabel#connectionBadge[health="reachable"] { background: #e8f5ee; color: #278258; }
+QLabel#connectionBadge[health="unreachable"] { background: #fceeee; color: #a83232; }
+QPushButton#detectConnection:disabled { background: #edf2f9; color: #78879b; border-color: #e0e7f1; }
 QScrollArea { background: transparent; border: none; }
 QToolTip { background: white; color: #343c48; border: 1px solid #dfe4eb; padding: 6px; }
 
@@ -49,3 +52,23 @@ QPushButton:disabled { background: #f6f7f9; color: #a6adba; border: 1px solid #e
 QListWidget { background: transparent; border: none; outline: none; }
 QListWidget::item { border-radius: 8px; padding: 8px; margin: 3px 0; }
 QListWidget::item:selected { background: #e9f1fc; color: #2167ba; }
+/* Shared file/history browser language. Widget IDs remain for bindings/tests. */
+QFrame[visualRole="detailPanel"] { background: white; border: 1px solid #eceff3; border-radius: 12px; }
+QLabel[role="detailPanelTitle"] { font-size: 18px; color: #252a34; font-weight: 600; }
+QLabel[role="detailName"] { font-size: 16px; font-weight: 600; }
+QPushButton[visualRole="copyAction"] { padding: 3px 8px; font-size: 12px; }
+QAbstractItemView[visualRole="browserList"] { background: white; alternate-background-color: #fafbfc; border: 1px solid #e2e5eb; border-radius: 8px; outline: none; }
+QAbstractItemView[visualRole="browserList"]::item { padding: 7px 10px; margin: 0; border: none; border-bottom: 1px solid #f0f2f5; border-radius: 0; }
+QAbstractItemView[visualRole="browserList"]::item:selected { background: #dfeafb; color: #252a34; }
+QLabel[role="browserEmptyState"] { color: #939aa6; padding: 12px; }
+QSplitter[visualRole="browserSplitter"]::handle { background: transparent; }
+QSplitter[visualRole="browserSplitter"]::handle:hover { background: #dfeafb; }
+QFrame#filesTransferBar { background: #ffffff; border-top: 1px solid #e2e5eb; }
+
+QWidget#dashboardPage { background: #f4f6fa; }
+QWidget#dashboardPage QLabel[role="pageTitle"] { font-size: 32px; font-weight: 700; }
+QWidget#dashboardPage QLabel[role="metric"] { color: #182233; font-size: 19px; font-weight: 700; }
+QFrame[visualRole="dashboardMetric"] QLabel[role="cardTitle"] { color: #56657b; font-size: 13px; }
+QFrame[visualRole="dashboardPanel"] QLabel[role="cardTitle"] { color: #182233; font-size: 17px; font-weight: 600; }
+QTableView[visualRole="dashboardRecent"] { background: white; border-top: 1px solid #e9edf3; }
+QTableView[visualRole="dashboardRecent"]::item { padding: 6px 8px; border-bottom: 1px solid #eef1f5; }

@@ -34,6 +34,15 @@ BeginDownload decodeBeginDownload(std::string_view s) {
     validate(v);
     return v;
 }
+std::string encodeBeginHistoricalDownload(const BeginDownload &v) {
+    if (v.versionId.empty()) bad();
+    return encodeBeginDownload(v);
+}
+BeginDownload decodeBeginHistoricalDownload(std::string_view s) {
+    auto v = decodeBeginDownload(s);
+    if (v.versionId.empty()) bad();
+    return v;
+}
 std::string encodeDownloadReady(const DownloadReady &v) {
     validate(v);
     return dump(J{{"path", v.path}, {"version_id", v.versionId}, {"size", v.size}, {"sha256", v.sha256}});

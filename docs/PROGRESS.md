@@ -1,5 +1,150 @@
 # ChunkHarbor 开发进度
 
+## R2 Git 基线
+
+- 阶段版本使用标签 `r2-backup-restore-baseline`，保存 R2 实现、测试和验收记录。迁移测试仅纳入 [v2 与 v3 合成夹具](../tests/fixtures/README.md)。本地构建产物、验收日志及临时备份留在 Git 之外。
+
+## R2 最终综合验收（2026-11-04）
+
+- **达到关闭标准。** Windows 在同一隔离 Ubuntu 根上经 SSH 完成 auto A/B/C、服务端重启、当前单文件 C、历史单文件 A、旧快照 B 和当前目录 C。Windows 输出逐文件匹配原内容及 SHA-256。恢复前后当前指针、六个不可变版本对象和历史版本行一致。
+- 真实 SSH 回归覆盖 R1 持久 ACK 后双端进程中断续传、v2→v3→v4 后恢复 A/B/C、清单和首个数据块读取时远端继续更新。另在服务端提交后实际丢弃创建应答，GUI 只重连查询候选，没有重复创建。
+- Windows 配置与增量构建成功，完整 CTest **31/32**，103.12 秒。唯一失败是 R1 已记录的原生 ComboBox 自动输入问题。独立原生专项实际 DPR 1.0、1.25 通过，1.5 在最大化设置页复现失败。人工鼠标和系统 DPI 切换未验收。Ubuntu 当前源码隔离构建与完整 CTest **57/57**，41.61 秒。
+- 64 MiB、下载无续传、独立空目录和源端删除标记、持久快照、请求级幂等缺口、Windows NTFS 边界及未验证风险已分类记录。完整日志、实际 SHA-256 和 R3 前基线见 [R2 验收](R2_ACCEPTANCE.md)。未改生产代码或测试配置，未提交或推送。R3 等待另行指令。
+
+## R2.5.3 Windows 当前文件夹下载（2026-11-04）
+
+- 「目录快照」页增加「下载文件夹」。经持久快照确认后，查询同根最新序号作为基线，发送一次创建，按返回 ID 核对完整清单。零文件显示无已提交文件，已创建的空快照保留，本地不发布目录。
+- 复用快照预检、`SnapshotRestore` 串行历史版本下载、分块与整文件 SHA-256、`SnapshotOutput` 的 NTFS 暂存及无覆盖发布。服务端协议、schema 与 64 MiB 单文件限制保持原有语义。
+- 创建应答不确定时只读查询原端点。新增记录仅作为候选，需手动核对。关窗和切换端点会取消尚未发出创建请求的流程。已发出创建请求时，关窗会等待确认或核对。
+- Windows Qt 6.8.3 / MinGW 13.1 构建退出 0，`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure -j 2` **31/31**，106.28 秒。
+- Ubuntu 隔离构建 CTest **57/57**。真实 SSH 联调在清单读取和数据块读取时分别提交了新版本，Windows 仍恢复快照原来的 3 个文件，逐文件 SHA-256 匹配，且未跨逻辑前缀。详见 [R2.5.3 交付](R2_5_3_CURRENT_FOLDER_DOWNLOAD.md)。
+- 丢应答故障使用本机可控对端。真实 SSH 丢应答、强制退出、掉电、MSVC、原生目录选择框和远端万文件完整下载未验证。本轮停在 R2.5.3，R2 综合验收等待后续指令。
+
+## R2.5.2 Windows 指定快照整目录恢复（2026-11-04）
+
+- 「目录快照」页可选择已有父目录和新目录名。完整清单及预检有效时允许确认恢复，执行固定快照 ID 和不可变版本映射。串行复用 R2.3 下载与 SHA-256 校验，进度包含已刷盘文件数及字节数。
+- Windows 固定 NTFS 盘上按父句柄独占创建暂存树，拒绝穿越、路径别名和重解析点。核对暂存成员后以同卷一次重命名发布，内核拒绝覆盖竞争目标。只清理本任务对象，保留并报告外来成员或清理失败。服务端协议、存储和当前指针无需变更。
+- Windows Qt 6.8.3 / MinGW 13.1 构建退出 0，`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure -j 2` **31/31**，92.63 秒。恢复专项覆盖 129 文件的串行恢复、万项清单分页、失败清理、目标竞争和关窗。
+- Ubuntu 隔离构建 CTest **57/57**，42.14 秒。真实 Windows→SSH→Ubuntu 分别恢复同一路径的两个快照，新版 `DDDD` 与旧版 C、旧上传文件内容和 SHA-256 一致。见 [R2.5.2 交付](R2_5_2_SNAPSHOT_RESTORE.md)。
+- 真实盘满、突然掉电、MSVC、原生目录选择框及远端万文件整目录恢复未验证。选定父目录在执行时固定，暂存 ACL 隔离其他账号。同属主恶意改动和跨操作的掉电持久性超出本轮验证。下一子任务为 R2.5.3 当前目录下载。
+
+## R2.5.1 Windows GUI 目录快照浏览与恢复预览（2026-11-04）
+
+- 新增「目录快照」页。按逻辑根分页列出快照，核对选中快照头，逐页拉取固定 `snapshot_id` 的完整清单，展示相对路径、版本 ID、大小、SHA-256、文件数及总字节数。本地展示页最多 100 行。取消、切换、断连或响应不一致会清除未完成的清单。
+- 目标路径预检在后台线程执行。报告 Windows 非法名称、路径长度、大小写及文件和目录冲突、已有目标、被占用的父目录和重解析点。预览只读取本地属性。实际恢复仍须重新检查短名别名、路径竞态和发布安全。
+- 沿用 `directory_snapshot_v1`、64 KiB 帧和六条清单页。Windows Qt 测试读完 10,000 项、1,667 次清单请求。真实 Windows→SSH→Ubuntu 在快照创建后提交了新版本，Qt 仍读取 2 条旧映射及原 SHA-256。Ubuntu 在隔离的 R2.4 构建上重新运行 CTest **57/57**。
+- Windows Qt 6.8.3 / MinGW 13.1 下 `cmake --build build-windows-gui -j 2` 退出 0，`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure -j 2` **31/31**，93.96 秒。
+- 快照是服务器已提交文件版本集合。独立空目录和源端删除标记未入库。原生目录选择、原生桌面下拉框专项、MSVC、远端 10,000 项延迟及预检系统调用挂起时的退出延迟未验证。详见 [R2.5.1 交付](R2_5_1_SNAPSHOT_PREVIEW.md)。下一子任务为 R2.5.2 恢复执行。
+
+## R2.4 目录快照创建、持久化与查询（2026-11-04）
+
+- 服务端显式捕获指定逻辑根下的一致已提交文件版本集合。兼容 `current_files` 和未整理的已提交旧上传。允许零文件清单。空目录和不存在的前缀没有独立记录。源端删除、改名和部分成功按现有服务器状态体现。
+- schema v4 新增快照头、相对路径条目、路径/序号索引和历史及对象元数据外键。单事务从创建态写入映射并发布，失败或提交前退出不留下可查询的快照。不复制文件内容。单快照最多 10,000 文件。
+- HELLO 新增 `directory_snapshot_v1`，帧 37–43 支持创建、列表、元数据及条目分页。列表最多 64 条，条目最多 6 条，控制帧 64 KiB。共享协议及测试探针提供最小客户端入口。
+- v3 真实归档副本验证迁移 SQL 回滚、提交前退出、重启、版本及检查点保留。事务测试覆盖插入中途失败、SIGKILL、并发备份和第二个写事务被拒绝。还覆盖 70 条真实上传分页、10,001 条上限拒绝、无效引用、外键保护、空清单与源端删除。
+- Ubuntu 配置与构建退出 0，`ctest --test-dir build --output-on-failure` **57/57**，41.27 秒。补充锁断言后故障专项 1/1。Windows Qt 6.8.3 / MinGW 13.1 配置与构建退出 0，`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure` **30/30**，145.71 秒。首轮 Linux 54/55 为列表字段断言错误，已纠正并保留日志。
+- Windows 经真实 SSH 创建快照并核对元数据、列表和两条清单摘要。Windows Qt 从 v4 服务端恢复 A/B/C，以及下载当前空、中文和多块文件，大小及 SHA-256 均一致。R1–R2.3 相关回归通过。全部联调使用隔离源码树和备份根。
+- 提交后应答丢失、掉电、原生下拉框、MSVC 和真实库升级未验证。提交成功但应答丢失时可查列表，重发创建可能产生另一个完整快照。实际命令和变更清单见 [R2.4 交付](R2_4_DIRECTORY_SNAPSHOT.md)。未提交或推送，本轮停在 R2.4。
+
+## R2.3 指定历史版本下载与安全恢复（2026-11-04）
+
+- Windows 版本历史页可选中服务器版本并下载到指定本地路径，复用窗口级 DownloadController 和安全发布流程。进度栏显示完整版本 ID。换文件、换版本或离开历史页时，任务继续使用开始前固定的元数据。
+- 新协商能力 `historical_download_v1` 使用起始帧 36，必须同时提供逻辑路径及版本 ID。服务端按发布记录绑定两者，打开 `.versions/<id>/data` 并固定 FD，核对大小及 SHA-256 后沿用 32/33/14 下载帧。历史读取不会改写当前指针。现有 `download_v1` 仍要求匹配当前版本。schema v3 沿用。
+- 正常传统上传及启动修复先持久化不可变对象，再登记 COMMITTED。测试在副本刷盘前暂停，验证历史尚不可见。此时终止进程，重启可补齐对象并恢复内容。复核也修正了历史页在有记录时可能误报空页的问题。
+- Windows Qt 6.8.3 / MinGW 13.1 配置与构建退出 0，`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure` **29/29**，143.91 秒。Ubuntu GCC 11.4 在隔离源码树配置与构建退出 0，`ctest --test-dir build --output-on-failure` **54/54**，41.63 秒。初轮 Linux 52/53 和 Windows 28/29 均由新增错误码未加入校验表引起，失败记录保留。
+- 复用 v2 夹具做真实 Windows→SSH→Ubuntu 历史恢复，A/B/C 三份 14 字节文件的内容与 SHA-256 全部一致。当前文件 SSH 下载的空、中文及多块文件一致，R1 SSH 上传和续传矩阵 12 组通过。所有联调使用专用根及临时端口。
+- 已保留既有未提交工作，未提交或推送。原生保存框手动操作、原生下拉框专项、MSVC、硬件掉电与真实库升级未验证。详细文件、命令、日志和哈希见 [R2.3 交付](R2_3_HISTORY_RESTORE.md)。本轮停在 R2.3。
+
+## R2.2 服务端历史版本元数据与分页查询（2026-11-04）
+
+- 版本页可在本机提交记录与服务器历史之间切换。按逻辑路径查看序号、版本 ID、大小、SHA-256、提交时间及当前标记。异步查询支持更早页、取消及路径、端点切换。
+- schema v3 在同一事务内建立并回填历史表，保留版本、块、当前指针和上传会话。旧时间为未知。首次数据库发布登记 UTC 秒及持久序号，复用版本 ID 保留原元数据。HELLO 新增 `version_history_v1`，帧 34/35，独占序号游标，默认 32、最多 64 条，控制帧 64 KiB。既有 `download_v1` 保留当前版本匹配语义。
+- 保留旧服务端 `f00f601` 生成的 [v2 夹具](../tests/fixtures/README.md)。迁移验证覆盖回滚、提交前进程退出、重启、65 条分页、翻页中新增版本、旧客户端、旧库当前文件恢复及已确认块续传。实际查询的 EXPLAIN 命中路径/序号索引，未使用临时排序。
+- Windows Qt 6.8.3 / MinGW 13.1 使用 `cmake -S . -B build-windows-gui`、`cmake --build build-windows-gui -j 2` 退出 0，`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure` **28/28**。Ubuntu 专用目录 `/tmp/chunkharbor-r22-src-WN6VOZ8F` 按既有依赖参数配置并构建，`ctest --test-dir build --output-on-failure` **52/52**。补充旧库恢复断言后迁移专项再次通过。首轮缺依赖参数及 48/52 失败记录保留。
+- 真实 Windows→SSH→Ubuntu 历史查询核对旧库三个版本、当前哈希和未知时间，当前下载回归的空、中文、多块文件均匹配 SHA-256。使用专用根和临时端口，原工程与真实备份数据未被升级。
+- 独立审查未发现遗留阻塞问题。旧库已在盘上改名但尚未完成数据库发布的升级边界未用该夹具专项验证。原生下拉框、MSVC、掉电和真实库升级未执行。精确命令、失败原因及文件列表见 [R2.2 交付](R2_2_VERSION_HISTORY.md)。未提交或推送。下一项最小任务为 R2.3 指定历史版本读取及恢复。
+
+## 总览与顶部连接检测（2026-11-04）
+
+- 总览使用四张等宽统计卡片和等高的最近备份、最近活动列表。统计仍取 WorkspaceStore 的真实本机记录和 TransferController 的任务状态。两个列表保留最近五条的范围，按现有顺序展示，时间经 Qt 解析和本地化，路径及活动文本可悬停查看。继续使用窗口现有传输栏。
+- 顶部读取当前设置中的主机与端口，IPv6 显示带方括号的地址。地址可省略，完整值通过提示查看。检测入口由既有 HealthState 驱动，未检测、检测中、可达和失败四态各自对应按钮与颜色。总览和顶部从同一 Transport 读取状态。顶部和设置入口共用检测中防重入判断，修改端点后原探测与定时器按既有逻辑失效。
+- 每次探测异步 TCP 建连并交换 HELLO，结束即关闭本次 socket。原有 5 秒超时及 15 秒复查沿用，失败提示来自实际 Transport 状态。QObject 所有权和线程归属沿用原窗口，改动范围是 Qt 展示与信号绑定。
+- 本轮修改 MainWindow.cpp、DashboardPage.cpp、QtTcpTransport.cpp 的状态文案、Light.qss、gui_health_test.cpp、gui_pages_test.cpp 和本文件。保留已有未提交修改，暂存区未新增内容。
+- Windows Qt 6.8.3 与 MinGW 13.1.0 使用 `cmake -S . -B build-windows-gui -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_BUILD_SERVER=OFF -DCHUNKHARBOR_BUILD_CLI=OFF -DCHUNKHARBOR_BUILD_GUI=ON -DCHUNKHARBOR_BUILD_TESTS=ON -DCMAKE_PREFIX_PATH=D:/QT/6.8.3/mingw_64` 配置退出 0。随后 `cmake --build build-windows-gui -j 2` 退出 0，日志为 `build-windows-gui/dashboard-build-final.log`。`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure` 27/27 通过，耗时 132.40 秒。日志为 `build-windows-gui/dashboard-ctest.log`。
+- 首轮新增健康测试在旧状态文案上失败。首轮原生截图发现固定时间列宽受字体样式影响而截断，改为按渲染内容测量。
+- 原生 Windows 125% 运行 gui_pages_test 通过。Qt 离屏 150% 运行同一测试通过。原生 150% 的完整页面测试先停在既有文件表格高度断言，随后用 `QT_QPA_PLATFORM=windows`、`QT_SCALE_FACTOR=1.2` 和 `chunkharbor-gui-pages-test.exe --dashboard-layout build-windows-gui/dashboard-overview-150.png` 单独验证总览，实际 DPR 1.5，退出 0。增加这个仅用于测试的选项后重新构建，默认 gui_pages_test 仍通过。
+- GUI 回归覆盖真实 HELLO、检测按钮禁用、定时复查、超时与重试、端点失效、顶部和总览状态一致，以及空历史、最近记录、长路径和 IPv6 地址展示、窗口缩放、设置跳转。截图 `dashboard-overview-final.png` 和 `dashboard-overview-150.png` 来自隔离测试数据。真实 SSH、跨物理显示器拖动、Linux 构建及既有 native-desktop 下拉框专项本轮未执行。
+- 下一项最小验收是在真实本机记录与实际 SSH 隧道环境中人工核对连接失败提示和跨屏缩放。
+
+## UI-01 版本历史三栏与共享浏览样式（2026-11-04）
+
+- **任务 / 审计**：用户明确授权版本历史 UI 重构及两页共用视觉规范；先核对根目录规则、指南、路线图、Git、README、进度、WorkspaceStore、BackupWorker、VersionsPage、FilesPage、MainWindow、QSS和测试。保留此前所有未提交的R2.1/文件页改动，不reset/clean/commit/push，不触碰真实备份。当前历史数据是本机成功提交记录，最多500条，按端点与逻辑路径分组，绝非服务器完整历史。
+- **布局与共用规范**：版本页横向QSplitter分为约260px本机文件、弹性历史列表、约320px详情；最小窗口沿用1060×700，详情可手动收起。文件行42px，路径省略并以转义Tooltip查看完整值，禁水平滚动；历史三行展示本地时间、变化/大小、短ID；详情自然排列，保留版本/基线/内容SHA区分及实际变化块数与字节说明。移除底部详情和禁用恢复按钮，改轻量M6规划提示；不实现历史恢复。主窗口仅对版本页去掉外部QScrollArea，继续复用现有传输栏。
+- **共用组件 / C++取舍**：新增header-only `widgets/BrowserUi.h` 统一列表、空状态、详情字段、完整文本省略/复制、splitter和页面间距；Light.qss以visualRole/role统一选中色、边框、圆角、复制按钮和字体，删除文件页专属重复规则。FilesPage复用并补同样的空列表/无匹配提示，原下载交互不变。QObject父子所有权和带上下文的连接自动管理UI生命周期；没有线程、socket、磁盘或控制器所有权变化。
+- **绑定与时间**：QStandardItemModel保留原五列及完整FileRecord角色数据，详情只读当前选中行；无效选择/切文件/筛选无结果清除旧详情。时间解析ISODateWithMs后toLocalTime显示，原UTC/offset字符串不修改；按实际时刻稳定排序，修正原字符串排序对时区偏移和同秒毫秒的风险。缺失时区显示未知，不默认为UTC。基线absent仅显示首次提交提示且不可复制成ID。changedBlocks/missingBytes仍来自提交时上传计划，不是重新比较历史版本。
+- **保护边界**：未改WorkspaceStore存储、备份流程、差异算法、版本/基线生成、协议、schema、上传/下载控制器及SHA校验；无需迁移。README同步说明本机三栏与恢复规划提示。完整11个文件清单及说明见 [UI_01_VERSIONS.md](UI_01_VERSIONS.md)。
+- **实际配置 / 构建**：Windows Qt6.8.3、MinGW13.1.0，PATH前置Qt与MinGW bin；`cmake -S . -B build-windows-gui -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_BUILD_SERVER=OFF -DCHUNKHARBOR_BUILD_CLI=OFF -DCHUNKHARBOR_BUILD_GUI=ON -DCHUNKHARBOR_BUILD_TESTS=ON -DCMAKE_PREFIX_PATH=D:/QT/6.8.3/mingw_64`退出0；`cmake --build build-windows-gui -j 2`最终退出0，日志 `build-windows-gui/ui-01-build-delivery.log`；无新增C++编译警告，配置仍提示可选Vulkan头缺失，windeployqt仍提示dxcompiler/dxil缺失，未阻塞构建。
+- **已执行专项**：`ctest --test-dir build-windows-gui -R '^(gui_pages_test|versions_page_test)$' --output-on-failure` 2/2通过。先在旧实现复现“缺少紧凑版本列表”失败，再实现。新增versions_page_test覆盖旧版/新版绑定、UTC与offset换算/真实排序、版本及基线复制、不同端点同路径分组、无效选择/无匹配清理、持久记录原值保留、长中文路径、宽窄/最大化、详情折叠和两页视觉role一致性。原生截图先发现delegate换行被连成一行及浅蓝选中背景上系统白字，分别修正明确分行绘制和使用文本palette；不改业务。
+- **最终完整回归**：`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure` **27/27通过，146.93秒，退出0**；日志 `build-windows-gui/ui-01-ctest.log`。包含新增版本页、原文件页/查询、29个下载场景、输出安全/故障、生命周期、上传及健康回归。`git diff --check`退出0；暂存区仍为空。
+- **原生 / 缩放验证**：以 `QT_QPA_PLATFORM=windows` 分别运行 `./build-windows-gui/chunkharbor-versions-page-test.exe` 与 `./build-windows-gui/chunkharbor-gui-pages-test.exe`，均退出0，并通过图像工具核对测试生成的 `ui-01-versions-final.png`、`ui-01-files-final.png`；使用长中文路径、完整32位版本ID和64位哈希的隔离夹具，无真实用户历史。以 `QT_QPA_PLATFORM=offscreen`、`QT_SCALE_FACTOR=1.5` 和 `2` 分别运行versions-page-test均退出0，正常/窄窗、折叠、最大化和绑定断言通过。原生与offscreen验证不同，未宣称多物理显示器实测。
+- **未执行 / 风险**：原生保存框、不同物理显示器的DPI拖动、MSVC/Release、Linux编译/CTest、SSH真实端到端本轮未执行，理由是本轮UI范围且本地Qt回归覆盖业务接口。既有native-desktop下拉框专项此前失败且获用户人工确认，本轮未重跑/未禁用；不称全部原生专项全绿。高缩放的offscreen虚拟屏小于既有最小窗口不作为正常物理桌面验收；支持尺寸以下的屏幕需人工核对。
+- **下一项最小任务**：用户在真实本机记录上人工核对两页、复制和高DPI显示；本轮不推进R2历史恢复协议或后端功能。
+
+## 文件页面独立 UI 重构（2026-11-04）
+
+- **范围 / 审计**：本轮由用户单独授权，只整理 Windows Qt 文件页。开始时 9 个已修改文件、11 个未跟踪文件、暂存区为空；包含尚未提交的 R2.1 下载实现和测试。全部保留，无 reset/clean/commit/push。核对了协议分层、路线图、README、进度、MainWindow、FilesPage、ServerFilesModel、FileListController、DownloadController、DownloadOutput 和现有测试；未重做里程碑。
+- **布局**：保留导航与浅色 QSS，导航宽度 188px；文件页取消外层 QScrollArea，横向 QSplitter 将弹性列表与约 320px 详情并列。42px 行高，普通窗口可显示约 10 行，增加高度直接扩展列表。详情可拖动调宽或按钮收起；版本/哈希列仅隐藏，完整字段保留。页面内代理模型格式化大小，服务器原始整数未改；详情按宽度省略，PlainText 与转义 Tooltip 防止服务器字符串被解释为富文本，支持复制完整路径/版本/哈希。
+- **状态 / 兼容**：搜索仍只筛选当前页；分页移至底部，不展示伪总数/总页数。FileListController 仅增加成功操作对应的展示页码，失败/取消不推进，端点改变重置；原游标、128 页返回边界与查询协议不变。过滤/页面重置清理无效详情。传输栏从详情移到主窗口内容底部，页面切换后仍显示；直接绑定原 DownloadController 的独立任务元数据与 changed 信号，取消仍调用原 cancel。未改下载状态机、哈希、Win32 安全写入/发布、上传、服务端、schema 及关闭语义，无数据迁移。
+- **线程 / 所有权**：GUI 线程只渲染与交互；QObject 父级负责 Widget 生命周期，MainWindow 重新挂接传输栏，原窗口所有的 DownloadController 保持存活。既有后台 socket/哈希/文件操作与 queued 状态机制不变。未操作真实备份目录。
+- **实际 Windows 配置**：`cmake -S . -B build-windows-gui -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_BUILD_SERVER=OFF -DCHUNKHARBOR_BUILD_CLI=OFF -DCHUNKHARBOR_BUILD_GUI=ON -DCHUNKHARBOR_BUILD_TESTS=ON -DCMAKE_PREFIX_PATH=D:/QT/6.8.3/mingw_64` 退出0。PATH 前置 `D:/QT/Tools/mingw1310_64/bin`、`D:/QT/6.8.3/mingw_64/bin`；复用 Qt6.8.3 / MinGW13.1.0 / Ninja 既有构建目录。`cmake --build build-windows-gui -j 2` 退出0，无新增 C++ 编译警告；Qt 配置仍提示可选 Vulkan 头缺失，windeployqt 提示 dxcompiler/dxil 缺失，未影响构建。
+- **实际回归**：`ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure` **26/26 通过，139.00秒，退出0**，日志 `build-windows-gui/files-ui-ctest-final.log`；包含 29 个下载 TCP 场景（新增更换选中项并切换页面仍下载原任务）、21 个文件查询场景、SHA/输出故障/取消/在途销毁及上传回归。没有删减原异常断言。
+- **测试迭代记录**：先在旧布局复现列未隐藏失败；新长路径夹具未排序被原协议验证拒绝，修正夹具。首轮非原生 CTest 25/26：no_capability 模拟端过快返回，10ms 心跳未触发；仅为该模拟响应加40ms延迟，保留心跳断言，重跑通过。原生最大化测试增加100ms事件循环等待窗口管理器完成几何调整。一次补编与运行中的测试撞到 exe 占用，退出后重新构建；不终止用户 GUI 进程。失败日志保留 `files-ui-ctest.log`。
+- **最终补验**：最新源码 `cmake --build build-windows-gui -j 2` 退出0（`files-ui-build-delivery.log`）；`ctest --test-dir build-windows-gui -R '^gui_pages_test$' --output-on-failure` 1/1通过，退出0。设置 `QT_QPA_PLATFORM=windows` 执行 `./build-windows-gui/chunkharbor-gui-pages-test.exe` 退出0，最大化窗口2048×1081逻辑像素、表格viewport高678。设置 `QT_QPA_PLATFORM=offscreen` 分别以 `QT_SCALE_FACTOR=1.5`、`2` 执行同一测试，均退出0；正常窗口与窄窗口完整断言通过，虚拟屏最大化低于支持最小尺寸时仅验证内容可见，不当作物理高DPI验收。`git diff --check` 退出0。
+- **视觉 / 限制**：使用 windows 平台检查中文、长路径、省略、选中色、复制、窄窗/普通/大窗口/最大化和详情收起；截图 `build-windows-gui/files-ui-windows-final.png` 为32条长路径测试夹具，非真实服务器备份。offscreen 字体不能代表 Windows，截图采用原生 windows 平台。高缩放下 offscreen 虚拟屏小于既有 1060×700 最小窗口，不据此宣称小屏幕最大化体验已验收。
+- **未执行**：既有失败且此前获用户人工确认的 native-desktop 下拉框专项未重跑，未禁用；不称全量27个测试全绿。Windows 原生保存框人工选择、不同物理显示器/DPI 的人工拖动、MSVC/Release、Linux 构建/CTest及本轮SSH端到端未执行；本轮未改相关后端。保留64MiB、单任务、无下载续传和不覆盖限制。建议下一轮最小任务是用户人工核对真实数据的文件页与原生保存框；R2.2需另行授权，不自动继续。
+- **文件与设计**：完整本轮14个文件清单、Qt布局和控制器关系见 [FILES_PAGE_UI.md](FILES_PAGE_UI.md)。
+
+## R2.1 Windows Qt GUI 当前单文件下载（2026-11-04）
+
+- **范围与基准**：从Windows/Ubuntu现有 `f00f601` 继续；保留本文件本轮之前未提交的清理/恢复记录。仅实现R2.1，不新增服务端协议、SQLite schema、历史/目录下载或GB级能力，不改健康检查和auto备份策略，不提交/推送/跨机同步源码，不操作真实备份。
+- **交付**：文件页选中条目→下载→系统保存框→后台逐块读取与校验→安全发布；显示文件名、字节、百分比、状态及取消。保存框前固定端点和列表的路径/版本/大小/摘要，VERSION_CONFLICT提示刷新，不静默选择新版本。空文件也校验SHA-256；失败/取消不发布半文件，既有目标拒绝覆盖，重复启动拒绝。
+- **线程/资源**：新增DownloadController、DownloadOutput；worker独占QTcpSocket、哈希和Win32输出，GUI只处理queued状态；每次至多256KiB、一个在途请求和一个待处理进度事件。5秒连接、10秒请求期限，每50ms检查取消。原子CAS定义取消与发布的提交点；越过提交点后以发布结果为准。正常关窗异步取消，直接析构先停止既有列表/健康连接、销毁页面，再取消/join任务，避免拆卸回调访问已销毁成员。
+- **Windows发布**：本地绝对路径与服务器逻辑路径分离；逐祖先拒绝reparse并保留不共享DELETE的目录句柄；同目录随机临时文件CREATE_NEW、独占句柄，块/整文件SHA-256一致后FlushFileBuffers和FileRenameInfo（ReplaceIfExists=FALSE）发布。已有目标检查只是提前报错，真正防竞争由系统调用保证；RAII通过文件句柄删除未发布临时对象。仅本地盘路径且长度<240字符，UNC/设备/ADS/保留名等明确拒绝，无覆盖回退。
+- **测试先行及修复记录**：gui_pages_test先复现“选择有效文件仍不能下载”。初轮构建误并发导致静态库文件锁冲突，已改串行构建；探针中文argv误作UTF-8导致路径打开失败，改用Qt Unicode arguments。首轮完整CTest实际24/26：combo_popup_test历史原生输入失败、gui_files_test关窗堆损坏；修正页面/控制器销毁顺序后列表通过。随后回归24/25中gui_health_test析构崩溃；GDB定位socket析构→disconnected→fail→已销毁QTimer::start，新短生命周期测试先复现SegFault，再在MainWindow销毁前调用既有停止接口修复。原始失败日志全部保留，不宣称首轮全绿。
+- **构建/最终自动验证**：Windows Qt6.8.3 / MinGW13.1.0，使用 `D:/CMake/bin/cmake` 与原Ninja缓存；配置和构建命令见 [R2.1专项](R2_1_GUI_DOWNLOAD.md)。`cmake --build build-windows-gui -j 2` 退出0。最终 `ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure` **26/26通过**，136.89秒、退出0；包含10轮健康/列表在途销毁测试。日志为 `build-windows-gui/r2-1-{build,ctest}-delivery.log`。`git diff --check` 退出0。
+- **新增自动覆盖**：gui_download_test含28个TCP/GUI场景（含空/普通/多块/中文、两级SHA错误、版本冲突、断连/超时、部分下载取消/断连、重复启动、关窗/销毁、已有/竞争/硬链接目标、junction父目录、目录替换及畸形响应）；download_output_test在测试编译单元注入真实Win32写入/flush失败和短写，验证不发布及清理；gui_download_lifetime_test覆盖健康/列表等待HELLO时的销毁各5轮。生产代码无测试故障开关。
+- **真实SSH下载**：`python tests/integration/windows_gui_download_ssh_test.py build-windows-gui/chunkharbor-gui-download-probe.exe miniob-ubuntu /home/ning/ChunkHarbor/build/chunkharbor-server` 退出0。通过真实文件列表选择、保存框、下载；0字节空文件、19字节中文文件和793856字节多块文件，服务端files副本与Windows结果大小/SHA-256逐项一致。最终专用根 `/tmp/chunkharbor-r2-1-download-5taCk4mr`，日志 `build-windows-gui/r2-1-ssh-download-delivery.log`；临时测试服务/隧道已停止，本地结果随隔离临时目录清理。
+- **R1上传回归**：`python tests/integration/windows_mode_ssh_test.py build-windows-gui/chunkharbor-gui-transfer-probe.exe miniob-ubuntu /home/ning/ChunkHarbor/build/chunkharbor-server` 退出0，12组真实SSH矩阵通过，涵盖full目标保护、incremental/无变化、显式resume、混合auto、检查点损坏/过期、源/远端基线变化、部分成功后重扫确认及活跃目标保护。专用根 `/tmp/chunkharbor-mode-ZsXHw2YB`，日志 `build-windows-gui/r2-1-ssh-upload.log`；不修改或重启用户服务。
+- **审查与未验证**：独立只读审查已复核Win32发布、CAS取消、queued回调和最终shutdown顺序，未报告遗留阻塞问题；不以静态审查冒充运行。自动化保存框强制Qt非原生，正式程序默认Windows原生保存框的人工交互未验证；MSVC/Release、硬件掉电、强杀恢复、真实磁盘耗尽未执行（写入/flush失败为注入测试）。未重跑Linux完整构建/CTest，服务端未改且复用既有二进制完成SSH验收。R1原生combo_popup_test失败仍保留，未修复/删除/禁用，不称全部CTest全绿。
+- **兼容与限制**：原download_v1版本前置条件、上传/持久会话及schema v2不变，无迁移；单文件64MiB、单任务，无下载续传，越过发布提交点的取消可能报告成功；Windows数据flush不等于已验证掉电下目录元数据持久性。Linux Qt GUI安全输出后端本轮不提供，明确提示用Linux CLI。专用测试根保留用于审计，无历史GC或真实数据删除。
+- **下一项唯一最小任务**：R2.2服务端历史元数据/时间语义、旧库兼容迁移与有界查询设计；本轮停止，不自动开始实现。详情见 [R2.1设计与验证](R2_1_GUI_DOWNLOAD.md)。
+
+## 用户授权清理可再生成的测试产物（2026-11-03）
+
+- 用户指定删除 `/tmp/chunkharbor-startup-audit-4pkwba53` 隔离副本，并选择仅清理可重新生成的测试产物和临时文件。已检查临时路径、非符号链接及所有者后删除该副本；不删除测试源码、真实备份或备份数据库。
+- Windows `build-windows-gui` 删除24个测试可执行程序/探针，共340,872,359字节；Ubuntu原工程 `build` 删除34个测试可执行程序/故障注入库，共86,054,176字节。跳过运行中文件检查无命中；清理前后GUI、server、CLI及各自CMakeCache的SHA-256保持一致。
+- 保留原始测试日志、截图和此前用户数据恢复/删除审计备份，这些是历史证据或数据备份。CTest测试程序现需先执行对应平台 `cmake --build` 重建；本轮没有重跑测试，以免立即重新生成刚清理的产物。未提交或推送。
+
+## 用户授权删除 photos 当前备份（2026-11-03）
+
+- 用户明确要求删除Linux备份根 `files/photos` 以释放空间。只读审计发现47条当前路径、47个版本，文件目录约323MiB；无该路径在途上传、无legacy迁移记录，其他当前路径未引用这些版本。
+- 先在隔离副本删除47条current_files记录和对应目录，SQLite完整性/外键检查通过，服务端随机端口启动并完成HELLO；50条其他当前记录及101个版本保留。
+- 真实操作获取存储根flock，核验47个目标文件及SHA-256、精确目录内容、所有权和无符号链接；先备份SQLite并保存清单到 `/tmp/chunkharbor-delete-photos-audit-zkww3ku4`，事务移除47条当前路径，再删除用户明确指定的 `files/photos` 目录。剩余50个当前文件逐一核验SHA-256、SQLite完整性和外键均通过；101个历史版本保留，未修改其他路径。
+- 删除的是当前文件目录（约323MiB逻辑大小），`.versions` 历史副本仍占空间；本轮未自动清理历史版本。真实服务端未启动验证，以免启动恢复流程影响其他会话；隔离副本已验证启动。未修改业务代码，未commit/push。
+
+## 用户授权恢复缺失备份文件（2026-11-03）
+
+- 用户明确授权恢复真实备份根 `/home/ning/exchangeFiles/chunkharbor-backup` 中缺失的旧路径文件。恢复前核验无运行服务、SQLite quick_check、97条当前记录、路径/权限及版本副本SHA-256；缺失数量为47。
+- 仅补齐47个缺失文件，临时文件校验、fsync后以不覆盖已有目标的方式发布；目录0700、文件0600，逐个检查大小和SHA-256。恢复后97个当前文件校验一致，恢复操作期间数据库哈希未变；审计清单位于Linux临时目录 `/tmp/chunkharbor-real-recovery-audit-llsdd1tw/manifest.json`。
+- 原备份根上临时启动服务端随机端口36737成功，CLI HELLO退出0；测试服务已停止，用户可自行在8787启动正式服务。首次脚本在任何写入前因pgrep无进程返回1而退出，修正检查后成功。未修改项目业务代码，未提交或推送。
+
+## 发布后现场排查：存储初始化失败与SSH转发拒绝（2026-11-03）
+
+- 用户报告服务端`storage operation failed`及SSH本地转发反复`connect failed: Connection refused`。现场检查无ChunkHarbor服务进程、Ubuntu8787无监听；源码先构造UploadStorage/DeltaStorage，之后才创建TcpServer，故初始化失败会使SSH转发的目标连接被拒绝。
+- 只读核对原备份：SQLite quick_check正常，空间/inode充足、根目录权限正常；97个当前文件中47个在files下缺失，其他当前文件摘要核验通过；47个对应不可变版本副本均存在且大小/SHA-256匹配。尚不能判断缺失文件被删除/移动的时间或责任来源。
+- 独立副本`/tmp/chunkharbor-startup-audit-4pkwba53/storage`复现：strace确认读取首个缺失当前文件返回ENOENT，进程退出2。只在副本恢复47个文件后，初稿恢复文件/新目录默认权限过宽，被安全校验拒绝；gdb定位directory权限检查，修正副本目录0700/文件0600后成功LISTENING随机端口36251，CLI HELLO退出0。测试服务已停止，副本保留用于核对。
+- 原备份未恢复、未删除、未重置数据库；只读检查与副本验证前后原数据库SHA-256一致。未修改业务代码、Git提交/推送或真实服务状态。实际数据恢复需用户另行明确授权，不能把副本启动成功写成真实服务已经恢复。
+
 ## R1 发布与 Linux 原工程同步（2026-11-03）
 
 - 用户明确授权提交、推送GitHub并同步Linux虚拟机。R1功能提交为 `83453c4ba134719af4f7ded3e875c986fd8d3488`；发布文档随后作为独立提交，最终版本以Git HEAD核对为准。

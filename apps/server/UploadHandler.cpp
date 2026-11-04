@@ -12,7 +12,7 @@ using namespace chunkharbor;
 using namespace chunkharbor::protocol;
 struct State {
     bool ready = false, upload = false, busy = false, delta = false, fileList = false,
-         download = false;
+         download = false, history = false, historicalDownload = false, snapshots = false;
     std::uint64_t highestRequestId = 0;
     UploadSessionPtr session;
     std::optional<SessionId> deltaSession{};
@@ -74,27 +74,49 @@ chunkharbor::TcpConnection::MessageCallback makeUploadHandler(chunkharbor::Uploa
                                                "file_list_v1") != offer.capabilities.end();
                     if (state->fileList)
                         ack.capabilities.push_back("file_list_v1");
+                    state->history = std::find(offer.capabilities.begin(), offer.capabilities.end(),
+                                               VersionHistoryCapability) != offer.capabilities.end();
+                    if (state->history)
+                        ack.capabilities.push_back(VersionHistoryCapability);
                     state->download = std::find(offer.capabilities.begin(), offer.capabilities.end(),
                                                "download_v1") != offer.capabilities.end();
                     if (state->download)
                         ack.capabilities.push_back("download_v1");
+                    state->historicalDownload = std::find(offer.capabilities.begin(), offer.capabilities.end(),
+                                                           HistoricalDownloadCapability) != offer.capabilities.end();
+                    if (state->historicalDownload)
+                        ack.capabilities.push_back(HistoricalDownloadCapability);
+                    state->snapshots = std::find(offer.capabilities.begin(), offer.capabilities.end(),
+                                                 DirectorySnapshotCapability) != offer.capabilities.end();
+                    if (state->snapshots)
+                        ack.capabilities.push_back(DirectorySnapshotCapability);
                     connection->send(encode({2, request.requestId, encodeHelloAck(ack)}));
                     state->ready = true;
                     continue;
                 }
                 if (request.type == 1)
                     throw MessageError("ALREADY_HANDSHAKEN", "HELLO is only allowed once");
-                const bool listRequest = request.type == 11;
-                if (listRequest && !state->fileList)
+                const bool historyRequest = request.type == ListVersionsType;
+                if (historyRequest && !state->history)
+                    throw MessageError("UNSUPPORTED_OPERATION", "Version history capability required");
+                const bool snapshotRequest = request.type == CreateSnapshotType || request.type == GetSnapshotType ||
+                    request.type == ListSnapshotsType || request.type == ListSnapshotEntriesType;
+                if (snapshotRequest && !state->snapshots)
+                    throw MessageError("UNSUPPORTED_OPERATION", "Directory snapshot capability required");
+                const bool listRequest = request.type == 11 || historyRequest || snapshotRequest;
+                if (request.type == 11 && !state->fileList)
                     throw MessageError("UNSUPPORTED_OPERATION", "File list capability required");
-                const bool downloadRequest = request.type == 13 || request.type == 33;
-                if (downloadRequest && !state->download)
+                const bool historicalOpen = request.type == BeginHistoricalDownloadType;
+                const bool downloadRequest = request.type == 13 || historicalOpen || request.type == 33;
+                if ((request.type == 13 && !state->download) ||
+                    (historicalOpen && !state->historicalDownload) ||
+                    (request.type == 33 && !state->download && !state->historicalDownload))
                     throw MessageError("UNSUPPORTED_OPERATION", "Download capability required");
                 if (downloadRequest && (state->session || state->deltaSession))
                     throw MessageError("CONFLICT", "Cannot mix upload and download sessions");
                 if (state->downloadSession && !downloadRequest && !listRequest)
                     throw MessageError("CONFLICT", "Download session already bound");
-                if (request.type == 13 && state->downloadSession)
+                if ((request.type == 13 || historicalOpen) && state->downloadSession)
                     throw MessageError("CONFLICT", "One download is allowed per connection");
                 const bool deltaRequest = request.type == 18 || request.type == 19 ||
                                           (request.type >= 24 && request.type <= 30) ||
@@ -131,13 +153,32 @@ chunkharbor::TcpConnection::MessageCallback makeUploadHandler(chunkharbor::Uploa
                     [&storage, session, delta, deltaRequest, boundDelta, downloadSession,
                      request = std::move(request)]() -> std::any {
                         try {
-                            if (request.type == 13) {
-                                auto opened = storage.openDownload(decodeBeginDownload(request.payload));
+                            if (request.type == 13 || request.type == BeginHistoricalDownloadType) {
+                                const bool historical = request.type == BeginHistoricalDownloadType;
+                                auto opened = historical
+                                    ? storage.openDownload(decodeBeginHistoricalDownload(request.payload),
+                                                           DownloadSelection::Historical)
+                                    : storage.openDownload(decodeBeginDownload(request.payload));
                                 return Reply{32, encodeDownloadReady(opened.ready), {}, {}, std::move(opened.session)};
                             }
                             if (request.type == 33)
                                 return Reply{14, encodeDownloadChunk(storage.readDownload(
                                                     downloadSession, decodeGetDownloadChunk(request.payload))), {}};
+                            if (request.type == CreateSnapshotType)
+                                return Reply{SnapshotInfoType, encodeSnapshotInfo(storage.createSnapshot(
+                                    decodeCreateSnapshot(request.payload))), {}};
+                            if (request.type == GetSnapshotType)
+                                return Reply{SnapshotInfoType, encodeSnapshotInfo(storage.getSnapshot(
+                                    decodeGetSnapshot(request.payload))), {}};
+                            if (request.type == ListSnapshotsType)
+                                return Reply{SnapshotsPageType, encodeSnapshotsPage(storage.listSnapshots(
+                                    decodeListSnapshots(request.payload))), {}};
+                            if (request.type == ListSnapshotEntriesType)
+                                return Reply{SnapshotEntriesPageType, encodeSnapshotEntriesPage(storage.listSnapshotEntries(
+                                    decodeListSnapshotEntries(request.payload))), {}};
+                            if (request.type == ListVersionsType)
+                                return Reply{VersionsResultType, encodeVersionsResult(storage.listVersions(
+                                                     decodeListVersions(request.payload))), {}};
                             if (request.type == 11)
                                 return Reply{12, encodeFilesResult(storage.listFiles(
                                                      decodeListFiles(request.payload))), {}};

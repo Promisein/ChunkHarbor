@@ -33,7 +33,7 @@ add_library(chunkharbor_protocol src/protocol/FrameCodec.cpp src/protocol/Handsh
     src/protocol/DataChunk.cpp src/protocol/BeginUpload.cpp src/protocol/UploadPlan.cpp
     src/protocol/ChunkAck.cpp src/protocol/UploadControl.cpp src/protocol/SessionStatus.cpp
     src/protocol/ManifestPage.cpp src/protocol/DeltaControl.cpp src/protocol/PlanPage.cpp
-    src/protocol/FilesList.cpp src/protocol/Download.cpp)
+    src/protocol/DirectorySnapshot.cpp src/protocol/VersionHistory.cpp src/protocol/FilesList.cpp src/protocol/Download.cpp)
 target_include_directories(chunkharbor_protocol PUBLIC include)
 target_include_directories(chunkharbor_protocol SYSTEM PRIVATE third_party)
 add_library(chunkharbor_client_core src/client_core/EchoExchange.cpp src/client_core/HandshakeExchange.cpp
@@ -101,16 +101,26 @@ if(CHUNKHARBOR_BUILD_GUI)
         apps/gui/BackupWorker.cpp apps/gui/TransferTypes.h
         apps/gui/QtTcpTransport.cpp apps/gui/QtTcpTransport.h
         apps/gui/ServerFilesModel.cpp apps/gui/ServerFilesModel.h
-        apps/gui/FileListController.cpp apps/gui/FileListController.h)
+        apps/gui/FileListController.cpp apps/gui/FileListController.h
+        apps/gui/DownloadController.cpp apps/gui/DownloadController.h
+        apps/gui/DownloadTransfer.h
+        apps/gui/DownloadOutput.cpp apps/gui/DownloadOutput.h)
     set_target_properties(chunkharbor_gui_transfer PROPERTIES AUTOMOC ON)
     target_link_libraries(chunkharbor_gui_transfer PUBLIC chunkharbor_gui_state chunkharbor_client_core Qt6::Network)
     add_library(chunkharbor_gui_pages STATIC apps/gui/MainWindow.cpp apps/gui/MainWindow.h
         apps/gui/widgets/InfoCard.cpp apps/gui/widgets/TableKit.cpp apps/gui/pages/WorkspacePage.cpp
         apps/gui/pages/DashboardPage.cpp apps/gui/pages/BackupPage.cpp
         apps/gui/pages/FilesPage.cpp apps/gui/pages/VersionsPage.cpp
+        apps/gui/pages/SnapshotPage.cpp apps/gui/pages/SnapshotPage.h
+        apps/gui/SnapshotPreflight.cpp apps/gui/SnapshotPreflight.h
+        apps/gui/SnapshotOutput.cpp apps/gui/SnapshotOutput.h
+        apps/gui/SnapshotRestore.cpp apps/gui/SnapshotRestore.h
         apps/gui/pages/LogsPage.cpp apps/gui/pages/SettingsPage.cpp)
     set_target_properties(chunkharbor_gui_pages PROPERTIES AUTOMOC ON)
     target_link_libraries(chunkharbor_gui_pages PUBLIC chunkharbor_gui_transfer Qt6::Widgets)
+    if(WIN32)
+        target_link_libraries(chunkharbor_gui_pages PRIVATE advapi32 ntdll)
+    endif()
     qt_add_executable(chunkharbor-gui WIN32 apps/gui/main.cpp apps/gui/styles/styles.qrc)
     set_target_properties(chunkharbor-gui PROPERTIES AUTOMOC ON AUTORCC ON)
     target_include_directories(chunkharbor-gui PRIVATE apps/gui)
@@ -156,7 +166,7 @@ if(CHUNKHARBOR_BUILD_GUI)
 endif()
 if(CHUNKHARBOR_BUILD_TESTS)
     enable_testing()
-    foreach(test delta_control plan_page delta_planner client_delta directory_scanner files_list download)
+    foreach(test delta_control plan_page delta_planner client_delta directory_scanner files_list download directory_snapshot)
         add_executable(chunkharbor-${test}-test tests/unit/${test}_test.cpp)
         target_link_libraries(chunkharbor-${test}-test PRIVATE chunkharbor_client_core)
         if(MSVC)
@@ -173,6 +183,20 @@ if(CHUNKHARBOR_BUILD_TESTS)
     if(CHUNKHARBOR_BUILD_GUI)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         find_package(Qt6 REQUIRED COMPONENTS Test)
+        add_executable(chunkharbor-snapshot-page-test tests/unit/snapshot_page_test.cpp)
+        target_link_libraries(chunkharbor-snapshot-page-test PRIVATE chunkharbor_gui_pages)
+        if(MSVC)
+            target_compile_options(chunkharbor-snapshot-page-test PRIVATE /utf-8)
+        endif()
+        add_test(NAME snapshot_page_test COMMAND chunkharbor-snapshot-page-test)
+        set_tests_properties(snapshot_page_test PROPERTIES TIMEOUT 120 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        add_executable(chunkharbor-server-history-gui-test tests/unit/server_history_gui_test.cpp)
+        target_link_libraries(chunkharbor-server-history-gui-test PRIVATE chunkharbor_gui_pages)
+        if(MSVC)
+            target_compile_options(chunkharbor-server-history-gui-test PRIVATE /utf-8)
+        endif()
+        add_test(NAME server_history_gui_test COMMAND chunkharbor-server-history-gui-test)
+        set_tests_properties(server_history_gui_test PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
         add_executable(chunkharbor-combo-popup-test tests/unit/combo_popup_test.cpp apps/gui/styles/styles.qrc)
         set_target_properties(chunkharbor-combo-popup-test PROPERTIES AUTORCC ON)
         target_link_libraries(chunkharbor-combo-popup-test PRIVATE chunkharbor_gui_pages Qt6::Test)
@@ -191,6 +215,32 @@ if(CHUNKHARBOR_BUILD_TESTS)
         add_executable(chunkharbor-gui-files-probe tests/integration/gui_files_probe.cpp apps/gui/styles/styles.qrc)
         set_target_properties(chunkharbor-gui-files-probe PROPERTIES AUTORCC ON)
         target_link_libraries(chunkharbor-gui-files-probe PRIVATE chunkharbor_gui_pages)
+        add_executable(chunkharbor-gui-download-probe tests/integration/gui_download_probe.cpp apps/gui/styles/styles.qrc)
+        set_target_properties(chunkharbor-gui-download-probe PROPERTIES AUTORCC ON)
+        target_link_libraries(chunkharbor-gui-download-probe PRIVATE chunkharbor_gui_pages)
+        add_executable(chunkharbor-gui-download-lifetime-test tests/unit/gui_download_lifetime_test.cpp)
+        target_link_libraries(chunkharbor-gui-download-lifetime-test PRIVATE chunkharbor_gui_pages)
+        add_test(NAME gui_download_lifetime_test COMMAND chunkharbor-gui-download-lifetime-test)
+        set_tests_properties(gui_download_lifetime_test PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        if(MSVC)
+            target_compile_options(chunkharbor-gui-download-probe PRIVATE /utf-8)
+        endif()
+        if(WIN32)
+            add_executable(chunkharbor-download-output-test tests/unit/download_output_test.cpp)
+            target_link_libraries(chunkharbor-download-output-test PRIVATE Qt6::Core)
+            add_test(NAME download_output_test COMMAND chunkharbor-download-output-test)
+            if(MSVC)
+                target_compile_options(chunkharbor-download-output-test PRIVATE /utf-8)
+            endif()
+            add_test(NAME gui_download_test COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/gui_download_test.py
+                $<TARGET_FILE:chunkharbor-gui-download-probe>)
+            set_tests_properties(gui_download_test PROPERTIES TIMEOUT 120)
+            add_test(NAME gui_history_restore_test COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/gui_download_test.py
+                $<TARGET_FILE:chunkharbor-gui-download-probe> history)
+            set_tests_properties(gui_history_restore_test PROPERTIES TIMEOUT 120)
+        endif()
         add_test(NAME gui_files_test COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/gui_files_test.py
             $<TARGET_FILE:chunkharbor-gui-files-probe>)
@@ -204,7 +254,16 @@ if(CHUNKHARBOR_BUILD_TESTS)
         target_link_libraries(chunkharbor-gui-worker-test PRIVATE chunkharbor_gui_transfer)
         add_test(NAME gui_worker_test COMMAND chunkharbor-gui-worker-test)
         set_tests_properties(gui_worker_test PROPERTIES TIMEOUT 60)
-        add_executable(chunkharbor-gui-pages-test tests/unit/gui_pages_test.cpp)
+        add_executable(chunkharbor-gui-pages-test tests/unit/gui_pages_test.cpp apps/gui/styles/styles.qrc)
+        set_target_properties(chunkharbor-gui-pages-test PROPERTIES AUTORCC ON)
+        add_executable(chunkharbor-versions-page-test tests/unit/versions_page_test.cpp apps/gui/styles/styles.qrc)
+        set_target_properties(chunkharbor-versions-page-test PROPERTIES AUTORCC ON)
+        target_link_libraries(chunkharbor-versions-page-test PRIVATE chunkharbor_gui_pages)
+        if(MSVC)
+            target_compile_options(chunkharbor-versions-page-test PRIVATE /utf-8)
+        endif()
+        add_test(NAME versions_page_test COMMAND chunkharbor-versions-page-test)
+        set_tests_properties(versions_page_test PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
         add_executable(chunkharbor-gui-health-test tests/unit/gui_health_test.cpp)
         target_link_libraries(chunkharbor-gui-health-test PRIVATE chunkharbor_gui_pages)
         add_test(NAME gui_health_test COMMAND chunkharbor-gui-health-test)
@@ -321,6 +380,21 @@ if(CHUNKHARBOR_BUILD_TESTS)
     endif()
     if(CHUNKHARBOR_BUILD_SERVER AND CHUNKHARBOR_BUILD_CLI)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME directory_snapshot_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/directory_snapshot_test.py
+            $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/r24-v3-backup.tar.gz)
+        set_tests_properties(directory_snapshot_integration PROPERTIES TIMEOUT 120)
+        add_test(NAME history_restore_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/history_restore_test.py
+            $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/r22-v2-backup.tar.gz)
+        set_tests_properties(history_restore_integration PROPERTIES TIMEOUT 90)
+        add_test(NAME version_history_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/version_history_test.py
+            $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/r22-v2-backup.tar.gz)
+        set_tests_properties(version_history_integration PROPERTIES TIMEOUT 90)
         add_test(NAME files_list_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/files_list_test.py
             $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>)
@@ -360,6 +434,11 @@ if(CHUNKHARBOR_BUILD_TESTS)
         if(NOT CHUNKHARBOR_SANITIZERS)
             add_library(chunkharbor-upload-delay-hook SHARED tests/helpers/upload_delay_hook.cpp)
             target_link_libraries(chunkharbor-upload-delay-hook PRIVATE ${CMAKE_DL_LIBS})
+            add_test(NAME legacy_history_publication COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/history_restore_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>
+                --publication $<TARGET_FILE:chunkharbor-upload-delay-hook>)
+            set_tests_properties(legacy_history_publication PROPERTIES TIMEOUT 45)
             add_test(NAME upload_idle_integration COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/upload_idle_test.py
                 $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-upload-delay-hook>)
@@ -380,6 +459,12 @@ if(CHUNKHARBOR_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_fault_test.py
                 $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
             set_tests_properties(delta_fault_integration PROPERTIES TIMEOUT 120)
+            add_test(NAME directory_snapshot_fault_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/directory_snapshot_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-cli>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/r24-v3-backup.tar.gz
+                $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(directory_snapshot_fault_integration PROPERTIES TIMEOUT 60)
         endif()
         add_test(NAME cli_upload_peer_test COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_upload_peer_test.py

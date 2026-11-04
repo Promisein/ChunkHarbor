@@ -1,4 +1,5 @@
 #include "chunkharbor/storage/SqliteStore.h"
+#include "chunkharbor/protocol/Download.h"
 #include <chrono>
 #include <fstream>
 #include <sqlite3.h>
@@ -86,20 +87,23 @@ SqliteStore::SqliteStore(std::string_view databasePath, std::string_view schemaP
             exec(db_, schema.c_str());
             if (integer(db_, "PRAGMA user_version") != 1)
                 throw std::runtime_error("schema migration did not set version");
-        } else if ((version != 1 && version != 2) ||
+        } else if ((version < 1 || version > 4) ||
                    integer(db_, "SELECT version FROM schema_version") != version) {
             throw std::runtime_error("unsupported SQLite schema version");
         }
-        if (integer(db_, "PRAGMA user_version") == 1) {
+        for (int next = integer(db_, "PRAGMA user_version") + 1; next <= 4; ++next) {
             std::string migrationPath(schemaPath);
             migrationPath =
-                migrationPath.substr(0, migrationPath.find_last_of("/\\") + 1) + "schema_v2.sql";
+                migrationPath.substr(0, migrationPath.find_last_of("/\\") + 1) + "schema_v" + std::to_string(next) + ".sql";
             std::ifstream migration(migrationPath);
             if (!migration)
-                throw std::runtime_error("schema v2 unavailable");
+                throw std::runtime_error("SQLite migration unavailable: " + migrationPath);
             std::string sql((std::istreambuf_iterator<char>(migration)), {});
             try {
                 exec(db_, sql.c_str());
+                if (integer(db_, "PRAGMA user_version") != next ||
+                    integer(db_, "SELECT version FROM schema_version") != next)
+                    throw std::runtime_error("SQLite migration version mismatch");
             } catch (...) {
                 sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
                 throw;
@@ -137,6 +141,41 @@ std::vector<VersionRecord> SqliteStore::listCurrentFiles(std::string_view afterP
     }
     if (status != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
     return rows;
+}
+
+protocol::VersionsResult SqliteStore::listVersions(const protocol::ListVersions &request) const {
+    protocol::encodeListVersions(request);
+    Statement query(db_,
+        "SELECT h.version_id,COALESCE(v.size,t.total_size),COALESCE(v.sha256,t.expected_sha256),"
+        "h.sequence,h.committed_at_s,CASE WHEN c.version_id IS NOT NULL THEN c.version_id=h.version_id "
+        "ELSE COALESCE(t.state='COMMITTED',0) END FROM version_history h "
+        "LEFT JOIN versions v ON v.id=h.version_id LEFT JOIN transfers t ON t.session_id=h.version_id "
+        "LEFT JOIN current_files c ON c.path=h.path WHERE h.path=?1 AND h.sequence<=?2 "
+        "ORDER BY h.sequence DESC LIMIT ?3");
+    bindText(query.value, 1, request.path);
+    sqlite3_bind_int64(query.value, 2, request.before ? static_cast<sqlite3_int64>(*request.before - 1) : INT64_MAX);
+    sqlite3_bind_int(query.value, 3, static_cast<int>(request.limit + 1));
+    protocol::VersionsResult result{request.path, {}, {}};
+    int status;
+    while ((status = sqlite3_step(query.value)) == SQLITE_ROW) {
+        const auto *hash = sqlite3_column_text(query.value, 2);
+        if (!hash) throw std::runtime_error("missing history metadata");
+        std::optional<std::uint64_t> time;
+        if (sqlite3_column_type(query.value, 4) != SQLITE_NULL)
+            time = static_cast<std::uint64_t>(sqlite3_column_int64(query.value, 4));
+        result.versions.push_back({
+            reinterpret_cast<const char *>(sqlite3_column_text(query.value, 0)),
+            static_cast<std::uint64_t>(sqlite3_column_int64(query.value, 1)),
+            reinterpret_cast<const char *>(hash),
+            static_cast<std::uint64_t>(sqlite3_column_int64(query.value, 3)), time,
+            sqlite3_column_int(query.value, 5) != 0});
+    }
+    if (status != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+    if (result.versions.size() > request.limit) {
+        result.versions.pop_back();
+        result.nextBefore = result.versions.back().sequence;
+    }
+    return result;
 }
 void SqliteStore::createTransfer(const Transfer &t) {
     Statement stmt(
@@ -307,4 +346,5 @@ bool SqliteStore::compareAndSetCurrent(std::string_view path,
     }
     return sqlite3_changes(db_) == 1;
 }
+#include "SqliteSnapshot.inc"
 } // namespace chunkharbor

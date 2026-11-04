@@ -24,7 +24,11 @@
 #include <QStandardItemModel>
 #include <QTemporaryDir>
 #include <QTableView>
+#include <QTableWidget>
 #include <QTimer>
+#include <QScrollArea>
+#include <QClipboard>
+#include <QSplitter>
 #include <iostream>
 #include <stdexcept>
 void check(bool v, const char *m) {
@@ -86,7 +90,7 @@ int main(int argc, char **argv) {
         QtTcpTransport transport;
         DashboardPage dashboard(&controller, &store, &transport);
         auto *connection = dashboard.findChild<QLabel *>("dashboardMetric0");
-        check(connection->text() == "未检查", "dashboard does not invent a connection result");
+        check(connection->text() == "未检测", "dashboard does not invent a connection result");
         FileListController fileList;
         FilesPage files(&fileList);
         VersionsPage versions(&store);
@@ -94,6 +98,21 @@ int main(int argc, char **argv) {
         auto *fileRows = files.findChild<QTableView *>("filesTable")->model();
         auto *list = versions.findChild<QListWidget *>("versionFiles");
         check(fileRows->rowCount() == 0 && list->count() == 0, "empty real histories");
+        auto *download = files.findChild<QPushButton *>("filesRestore");
+        check(download && !download->isEnabled(), "download requires a selection");
+        fileList.model()->setPage({{{"中文/a.txt", std::string(32, '1'), 123, std::string(64, 'a')}}, {}});
+        files.findChild<QTableView *>("filesTable")->selectRow(0);
+        check(download->isEnabled(), "selected server file must allow current-version download");
+        check(files.findChild<QLabel *>("fileDetails")->property("fullText").toString() == "中文/a.txt",
+              "detail uses actual selected logical path");
+        files.findChild<QPushButton *>("fileShaCopy")->click();
+        check(QApplication::clipboard()->text() == QString(64, 'a'), "copy retains full hash");
+        files.findChild<QLineEdit *>("fileSearch")->setText("not-present");
+        check(!download->isEnabled() && files.findChild<QLabel *>("fileDetails")->property("fullText").toString().isEmpty(),
+              "filtering out the selection clears details and download action");
+        files.findChild<QLineEdit *>("fileSearch")->clear();
+        fileList.model()->setPage({});
+        check(!download->isEnabled(), "reset page invalidates download selection");
         gui::FileRecord r;
         r.localPath = temp.filePath("source.txt");
         r.logicalPath = "工作区/source.txt";
@@ -116,8 +135,15 @@ int main(int argc, char **argv) {
               "server files must not be populated by local commit history");
         check(versions.findChild<QStandardItemModel *>("versionHistoryModel")->rowCount() == 2,
               "actual versions");
-        check(versions.findChild<QLabel *>("versionSha")->text() == other.sha256,
+        check(versions.findChild<QLabel *>("versionSha")->property("fullText").toString() == other.sha256,
               "latest actual SHA");
+        auto *historyList = versions.findChild<QListView *>("versionHistory");
+        check(historyList, "version history uses a compact list");
+        historyList->setCurrentIndex(historyList->model()->index(1, 0));
+        check(versions.findChild<QLabel *>("versionId")->property("fullText").toString() == r.versionId,
+              "selecting an older version binds that exact record");
+        versions.findChild<QPushButton *>("versionIdCopy")->click();
+        check(QApplication::clipboard()->text() == r.versionId, "copy full selected version ID");
         auto *search = files.findChild<QLineEdit *>("fileSearch");
         search->setText("absent-file");
         check(fileRows->rowCount() == 0, "file search");
@@ -138,10 +164,114 @@ int main(int argc, char **argv) {
               "dashboard actual version count");
         QSettings().setValue("storage/logDirectory", temp.filePath("window-logs"));
         MainWindow window(nullptr, temp.filePath("window"));
+        check(window.findChild<QLineEdit *>("snapshotRoot"), "snapshot browser entry is available");
+        const bool dashboardLayoutOnly = app.arguments().contains("--dashboard-layout");
+        window.findChild<QListWidget *>("navigation")->setCurrentRow(dashboardLayoutOnly ? 0 : 2);
+        window.show();
+        QApplication::processEvents();
+        QEventLoop maximizeLoop;
+        if (!dashboardLayoutOnly) {
+            auto *filesTable = window.findChild<QTableView *>("filesTable");
+            check(filesTable->isColumnHidden(2) && filesTable->isColumnHidden(3),
+                  "version and hash belong in the details panel");
+            for (auto *ancestor = filesTable->parentWidget(); ancestor; ancestor = ancestor->parentWidget())
+                check(!qobject_cast<QScrollArea *>(ancestor), "file table must not nest inside a page scroll area");
+            check(filesTable->viewport()->height() >= 7 * 42, "normal window shows at least seven file rows");
+            const int normalHeight = filesTable->height();
+            window.resize(1440, 1100);
+            QApplication::processEvents();
+            check(filesTable->height() >= normalHeight + 200, "extra height expands the file table");
+            auto *windowFiles = window.fileListController();
+            chunkharbor::protocol::FilesResult layoutPage;
+            for (int i = 0; i < 32; ++i)
+                layoutPage.files.push_back({"中文/" + std::string(140, 'x') + (i < 10 ? "0" : "") + std::to_string(i) + ".jpg",
+                                           std::string(32, '1'), 8710908, std::string(64, 'a')});
+            windowFiles->model()->setPage(std::move(layoutPage));
+            filesTable->selectRow(0);
+            window.resize(1060, 700);
+            QApplication::processEvents();
+            auto *detailsPanel = window.findChild<QWidget *>("filesDetailsPanel");
+            check(detailsPanel->width() >= 280 && filesTable->width() >= 320, "narrow window respects panel minimum widths");
+            check(filesTable->model()->index(0, 1).data().toString() == "8.3 MB", "friendly sizes are presentation only");
+            auto *toggle = window.findChild<QPushButton *>("filesToggleDetails");
+            const int expandedWidth = filesTable->width();
+            toggle->click();
+            QApplication::processEvents();
+            check(detailsPanel->isHidden() && filesTable->width() > expandedWidth + 200, "details collapse returns space to list");
+            toggle->click();
+            window.showMaximized();
+            QTimer::singleShot(100, &maximizeLoop, &QEventLoop::quit);
+            maximizeLoop.exec();
+            std::cerr << "maximized: window=" << window.width() << 'x' << window.height()
+                      << " viewport=" << filesTable->viewport()->height()
+                      << " details=" << detailsPanel->isVisible() << '\n';
+            // The offscreen virtual screen can be smaller than the supported minimum
+            // after scaling; assert full row capacity only at supported window sizes.
+            check(filesTable->viewport()->height() >= (window.height() >= 700 ? 7 * 42 : 1) && detailsPanel->isVisible(),
+                  "maximized window keeps file rows and details usable");
+            window.showNormal();
+            window.resize(1280, 820);
+            QApplication::processEvents();
+            if (argc > 1) window.grab().save(QString::fromLocal8Bit(argv[1]));
+        }
+        window.findChild<QListWidget *>("navigation")->setCurrentRow(0);
+        QApplication::processEvents();
+        check(window.findChild<QWidget *>("filesTransferBar")->isVisible(), "transfer bar remains visible across navigation");
         auto *badge = window.findChild<QLabel *>("connectionBadge");
-        check(badge->text() == "未检查", "topbar starts unchecked");
+        check(badge->text() == "未检测", "topbar starts unchecked");
         window.findChild<QSpinBox *>("serverPort")->setValue(34567);
-        check(badge->text() == "未检查", "endpoint edit requires a new check");
+        check(badge->text() == "未检测", "endpoint edit requires a new check");
+        auto *recent = window.findChild<QTableWidget *>("dashboardRecentBackups");
+        auto *activity = window.findChild<QTableWidget *>("dashboardRecentActivity");
+        check(recent && recent->rowCount() == 0, "dashboard empty history has no placeholder rows");
+        for (int i = 0; i < 6; ++i) {
+            auto record = r;
+            record.logicalPath = QString("中文归档/备份文件-%1-").arg(i) + QString(100, QChar(0x957f)) + ".txt";
+            record.versionId = QString(32, QChar('1' + i));
+            record.time = QString("2026-11-03T12:00:0%1Z").arg(i);
+            window.store()->addCommit(record);
+            window.store()->appendLog("信息", QString("测试活动 %1").arg(i));
+        }
+        check(recent->rowCount() == 5 && recent->item(0, 1)->text().startsWith("中文归档/备份文件-5-"),
+              "latest real backups populate capped rows in time order");
+        check(recent->item(0, 1)->toolTip().contains(recent->item(0, 1)->text()), "full path stays available");
+        check(activity->rowCount() == 5 && activity->item(0, 1)->text() == "测试活动 5", "activity uses actual log");
+        QApplication::processEvents();
+        check(recent->columnWidth(0) >= recent->fontMetrics().horizontalAdvance(recent->item(0, 0)->text()) + 12,
+              "time column fits formatted date and time");
+        std::cout << "dashboard device pixel ratio=" << window.devicePixelRatioF() << '\n';
+        if (argc > 2) check(window.grab().save(QString::fromLocal8Bit(argv[2])), "dashboard screenshot");
+        auto *detect = window.findChild<QPushButton *>("detectConnection");
+        auto *address = window.findChild<QLabel *>("connectionAddress");
+        QLineEdit *host = nullptr;
+        for (auto *edit : window.findChildren<QLineEdit *>()) {
+            if (edit->isReadOnly() && edit->text() == "127.0.0.1") host = edit;
+        }
+        check(host != nullptr, "find configured loopback address");
+        host->setText("2001:0db8:1234:5678:9abc:def0:1234:5678");
+        window.resize(1060, 700);
+        QApplication::processEvents();
+        check(address->toolTip().contains("[2001:0db8:1234:5678:9abc:def0:1234:5678]:34567"),
+              "configured IPv6 address remains fully inspectable");
+        check(address->geometry().right() < detect->geometry().left() && detect->isVisible() && detect->isEnabled(),
+              "long address never crowds out detection");
+        check(recent->parentWidget()->height() == activity->parentWidget()->height(), "recent panels are equal height");
+        const int cardWidth = window.findChild<QLabel *>("dashboardMetric0")->parentWidget()->width();
+        const int cardHeight = window.findChild<QLabel *>("dashboardMetric0")->parentWidget()->height();
+        for (int i = 1; i < 4; ++i) {
+            auto *card = window.findChild<QLabel *>(QString("dashboardMetric%1").arg(i))->parentWidget();
+            check(qAbs(card->width() - cardWidth) <= 2 && card->height() == cardHeight, "dashboard cards share geometry");
+        }
+        const int compactHeight = recent->height();
+        window.resize(1440, 1100);
+        QApplication::processEvents();
+        check(recent->height() > compactHeight + 200, "recent list absorbs extra height");
+        window.showMaximized();
+        QTimer::singleShot(100, &maximizeLoop, &QEventLoop::quit);
+        maximizeLoop.exec();
+        check(recent->isVisible() && detect->isVisible(), "dashboard controls stay available when maximized");
+        window.findChild<QPushButton *>("topbarSettings")->click();
+        check(window.findChild<QListWidget *>("navigation")->currentRow() == 5, "settings action retains navigation");
         std::cout << "real empty states, settings persistence, history, logs and connection "
                      "binding passed\n";
     } catch (const std::exception &e) {

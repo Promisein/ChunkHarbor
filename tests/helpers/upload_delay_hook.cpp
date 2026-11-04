@@ -38,3 +38,28 @@ extern "C" int fdatasync(int fd) {
     }
     return real(fd);
 }
+
+extern "C" int fsync(int fd) {
+    using Fn = int (*)(int);
+    static auto real = reinterpret_cast<Fn>(::dlsym(RTLD_NEXT, "fsync"));
+    const char *marker = std::getenv("CH_LEGACY_VERSION_SYNC_MARKER");
+    const char *release = std::getenv("CH_LEGACY_VERSION_SYNC_RELEASE");
+    if (marker && release) {
+        char link[64], path[4096];
+        std::snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+        const auto n = ::readlink(link, path, sizeof path - 1);
+        if (n >= 0) {
+            path[n] = '\0';
+            if (std::strstr(path, "/.versions/") && std::strstr(path, "/pending")) {
+                const int ready = ::open(marker, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0600);
+                if (ready >= 0) {
+                    ::close(ready);
+                    const timespec delay{0, 10000000};
+                    for (int attempt = 0; attempt < 1000 && ::access(release, F_OK) != 0; ++attempt)
+                        ::nanosleep(&delay, nullptr);
+                }
+            }
+        }
+    }
+    return real(fd);
+}

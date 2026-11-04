@@ -20,7 +20,7 @@ std::size_t limit(std::uint16_t type) {
 }
 } // namespace
 std::string encode(const Frame &frame) {
-    if (frame.type < 1 || frame.type > 33)
+    if (frame.type < 1 || frame.type > 43)
         throw std::invalid_argument("unknown frame type");
     if (frame.payload.size() > limit(frame.type))
         throw std::length_error("frame too large");
@@ -39,7 +39,7 @@ DecodeResult decode(std::string_view bytes) {
         return result;
     const auto type = static_cast<std::uint16_t>(get(bytes, 6, 2));
     const auto length = get(bytes, 20, 8);
-    if (get(bytes, 0, 4) != 0x43484b48 || get(bytes, 4, 2) != 1 || type < 1 || type > 33 ||
+    if (get(bytes, 0, 4) != 0x43484b48 || get(bytes, 4, 2) != 1 || type < 1 || type > 43 ||
         get(bytes, 8, 4) || get(bytes, 28, 4) || length > limit(type)) {
         result.status = DecodeStatus::Error;
         result.error = "invalid frame header";
