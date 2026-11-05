@@ -6,8 +6,15 @@
 #include <QAbstractTableModel>
 #include <QDateTime>
 #include <QDir>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QHeaderView>
+#include <QGridLayout>
+#include <QPainter>
+#include <QStyledItemDelegate>
+#include <QStyle>
+#include "TransferTypes.h"
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
@@ -28,6 +35,61 @@ QString creationTime(std::uint64_t seconds) {
     if (seconds > 253402300799ULL) return QObject::tr("时间未知");
     return QDateTime::fromSecsSinceEpoch(static_cast<qint64>(seconds)).toString("yyyy-MM-dd HH:mm:ss");
 }
+
+class SnapshotListDelegate final : public QStyledItemDelegate {
+  public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
+        QStyleOptionViewItem styled(option);
+        initStyleOption(&styled, index);
+        styled.text.clear();
+        (option.widget ? option.widget->style() : QApplication::style())
+            ->drawControl(QStyle::CE_ItemViewItem, &styled, painter, option.widget);
+        const QStringList lines{index.siblingAtColumn(1).data().toString(),
+            index.data().toString().left(12) + QObject::tr("…  ·  %1 个文件").arg(index.siblingAtColumn(2).data().toString()),
+            index.siblingAtColumn(3).data().toString()};
+        painter->save();
+        painter->setPen(styled.palette.color(QPalette::Text));
+        const auto rect = option.rect.adjusted(10, 8, -10, -8);
+        const int lineHeight = option.fontMetrics.lineSpacing();
+        for (int line = 0; line < lines.size(); ++line) {
+            auto font = option.font;
+            font.setBold(line == 0);
+            painter->setFont(font);
+            painter->drawText(QRect(rect.x(), rect.y() + line * lineHeight, rect.width(), lineHeight),
+                              Qt::AlignLeft | Qt::AlignVCenter,
+                              QFontMetrics(font).elidedText(lines[line], Qt::ElideMiddle, rect.width()));
+        }
+        painter->restore();
+    }
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &) const override {
+        return {0, option.fontMetrics.lineSpacing() * 3 + 16};
+    }
+};
+
+// Text that can be copied remains independent of what fits on screen.
+ui::ElidedLabel *snapshotField(QGridLayout *grid, QWidget *parent, int row, const QString &caption,
+                               const char *name, bool copy = false) {
+    auto *title = new QLabel(caption, parent);
+    title->setProperty("role", "muted");
+    grid->addWidget(title, row, 0);
+    auto *value = new ui::ElidedLabel(parent);
+    value->setObjectName(name);
+    grid->addWidget(value, row, 1);
+    grid->setColumnStretch(1, 1);
+    if (copy) {
+        auto *button = new QPushButton(QObject::tr("复制"), parent);
+        button->setObjectName(QString(name) + "Copy");
+        button->setAccessibleName(QObject::tr("复制%1").arg(caption));
+        button->setProperty("visualRole", "copyAction");
+        grid->addWidget(button, row, 2);
+        QObject::connect(button, &QPushButton::clicked, parent, [value] {
+            QApplication::clipboard()->setText(value->property("fullText").toString());
+        });
+    }
+    return value;
+}
+
 }
 
 class SnapshotPlanModel final : public QAbstractTableModel {
@@ -129,89 +191,201 @@ SnapshotPage::SnapshotPage(QWidget *parent)
     refresh_->setObjectName("snapshotQuery");
     captureButton_ = new QPushButton(tr("下载文件夹…"), this);
     captureButton_->setObjectName("snapshotDownloadFolder");
+    captureButton_->setProperty("primary", true);
     captureButton_->setToolTip(tr("先在服务器创建持久快照，再预览并下载当前已提交的文件。"));
     older_ = new QPushButton(tr("更早快照"), this);
     older_->setObjectName("snapshotOlder");
     cancel_ = new QPushButton(tr("取消查询"), this);
     cancel_->setObjectName("snapshotCancel");
     query->addWidget(root_, 1);
-    for (auto *button : {captureButton_, refresh_, older_, cancel_}) query->addWidget(button);
+    query->addWidget(captureButton_);
+    query->addSpacing(10);
+    auto *historyActions = new QLabel(tr("历史快照"), this);
+    historyActions->setProperty("role", "muted");
+    query->addWidget(historyActions);
+    for (auto *button : {refresh_, older_, cancel_}) query->addWidget(button);
     layout_->addLayout(query);
 
-    snapshots_ = new QTableWidget(0, 4, this);
+    auto *splitter = new QSplitter(Qt::Horizontal, this);
+    splitter->setObjectName("snapshotSplitter");
+    ui::browserSplitter(splitter);
+    auto *left = new QWidget(splitter);
+    left->setMinimumWidth(220);
+    auto *leftLayout = new QVBoxLayout(left);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    auto *listTitle = new QLabel(tr("历史快照"), left);
+    listTitle->setProperty("role", "detailPanelTitle");
+    leftLayout->addWidget(listTitle);
+    snapshots_ = new QTableWidget(0, 4, left);
     snapshots_->setObjectName("snapshotList");
-    snapshots_->setHorizontalHeaderLabels({tr("快照 ID"), tr("创建时间（本地）"), tr("文件数"), tr("逻辑根")});
-    snapshots_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    ui::browserList(snapshots_);
     snapshots_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    snapshots_->setSelectionMode(QAbstractItemView::SingleSelection);
+    snapshots_->setShowGrid(false);
     snapshots_->verticalHeader()->hide();
+    snapshots_->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    snapshots_->horizontalHeader()->hide();
     snapshots_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    layout_->addWidget(snapshots_, 1);
+    for (int col : {1, 2, 3}) snapshots_->hideColumn(col);
+    snapshots_->setItemDelegate(new SnapshotListDelegate(snapshots_));
+    snapshots_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    snapshots_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    leftLayout->addWidget(snapshots_, 1);
+    snapshotsEmpty_ = ui::browserEmptyState(snapshots_, tr("查询目录以查看历史快照"));
 
-    auto *destination = new QHBoxLayout;
-    target_ = new QLineEdit(this);
+    auto *right = new QWidget(splitter);
+    right->setMinimumWidth(435);
+    auto *rightLayout = new QVBoxLayout(right);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(8);
+    auto *details = new InfoCard(tr("快照详情"), right);
+    details->setObjectName("snapshotDetails");
+    ui::detailPanel(details);
+    details->setMaximumWidth(QWIDGETSIZE_MAX);
+    details->body()->setContentsMargins(14, 10, 14, 10);
+    details->body()->setSpacing(4);
+    auto *summary = new QGridLayout;
+    snapshotId_ = snapshotField(summary, details, 0, tr("快照 ID"), "snapshotSelectedId", true);
+    snapshotCopy_ = details->findChild<QPushButton *>("snapshotSelectedIdCopy");
+    snapshotRoot_ = snapshotField(summary, details, 1, tr("逻辑根目录"), "snapshotSelectedRoot");
+    snapshotMeta_ = snapshotField(summary, details, 2, tr("创建时间"), "snapshotSelectedMeta");
+    details->body()->addLayout(summary);
+    details->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    rightLayout->addWidget(details);
+
+    auto *manifestTitle = new QLabel(tr("文件清单"), right);
+    manifestTitle->setProperty("role", "detailPanelTitle");
+    auto *manifestHeading = new QHBoxLayout;
+    manifestHeading->addWidget(manifestTitle, 1);
+    auto *inspectFile = new QPushButton(tr("文件详情…"), right);
+    inspectFile->setObjectName("snapshotInspectFile");
+    manifestHeading->addWidget(inspectFile);
+    rightLayout->addLayout(manifestHeading);
+    model_ = new SnapshotPlanModel(this);
+    auto *entries = new QTableView(right);
+    entries->setObjectName("snapshotEntries");
+    entries->setModel(model_);
+    ui::browserList(entries);
+    entries->setSelectionBehavior(QAbstractItemView::SelectRows);
+    entries->setShowGrid(false);
+    entries->setWordWrap(false);
+    entries->verticalHeader()->hide();
+    entries->verticalHeader()->setDefaultSectionSize(32);
+    entries->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    entries->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    for (int col : {1, 3, 4}) entries->hideColumn(col);
+    for (int col : {2, 5, 6}) entries->setColumnWidth(col, 91);
+    entries->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    entries->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    rightLayout->addWidget(entries, 1);
+    auto *manifestEmpty = ui::browserEmptyState(entries, tr("选择快照以查看文件清单"));
+    manifestEmpty->setObjectName("snapshotEntriesEmpty");
+
+    auto *navigation = new QHBoxLayout;
+    previousEntries_ = new QPushButton(tr("清单上一页"), right);
+    nextEntries_ = new QPushButton(tr("清单下一页"), right);
+    previousEntries_->setObjectName("snapshotEntriesPrevious");
+    nextEntries_->setObjectName("snapshotEntriesNext");
+    navigation->addStretch();
+    navigation->addWidget(previousEntries_);
+    navigation->addWidget(nextEntries_);
+    rightLayout->addLayout(navigation);
+
+    auto *fileDetails = new QDialog(right);
+    fileDetails->setObjectName("snapshotFileDetails");
+    fileDetails->setWindowTitle(tr("快照文件详情"));
+    fileDetails->setWindowModality(Qt::WindowModal);
+    auto *fileFields = new QGridLayout(fileDetails);
+    fileFields->setContentsMargins(18, 16, 18, 16);
+    auto *versionId = snapshotField(fileFields, fileDetails, 0, tr("版本 ID"), "snapshotEntryVersionId", true);
+    auto *sha = snapshotField(fileFields, fileDetails, 1, tr("SHA-256"), "snapshotEntrySha", true);
+    auto *localTarget = snapshotField(fileFields, fileDetails, 2, tr("本地目标"), "snapshotEntryTarget");
+    auto *dismiss = new QDialogButtonBox(QDialogButtonBox::Close, fileDetails);
+    fileFields->addWidget(dismiss, 3, 0, 1, 3);
+    fileDetails->resize(540, fileDetails->sizeHint().height());
+    connect(dismiss, &QDialogButtonBox::rejected, fileDetails, &QDialog::reject);
+    connect(inspectFile, &QPushButton::clicked, fileDetails, &QDialog::open);
+    auto updateFileDetails = [=] {
+        const auto current = entries->currentIndex();
+        inspectFile->setEnabled(current.isValid());
+        if (!current.isValid()) fileDetails->reject();
+        versionId->setValue(current.siblingAtColumn(1).data().toString());
+        sha->setValue(current.siblingAtColumn(3).data().toString());
+        localTarget->setValue(current.siblingAtColumn(4).data().toString());
+    };
+    auto updateManifestView = [=] {
+        const bool hasFiles = model_->rowCount() > 0;
+        entries->horizontalHeader()->setVisible(hasFiles);
+        manifestEmpty->setVisible(!hasFiles);
+        manifestEmpty->setText(manifest_ ? tr("此快照没有文件") : tr("完整文件清单将在查询完成后显示"));
+        updateFileDetails();
+    };
+    connect(entries->selectionModel(), &QItemSelectionModel::currentChanged, this, updateFileDetails);
+    connect(model_, &QAbstractItemModel::modelReset, this, updateManifestView);
+    connect(model_, &QAbstractItemModel::dataChanged, this, updateFileDetails);
+    updateManifestView();
+
+    auto *recovery = new QWidget(right);
+    recovery->setObjectName("snapshotRecoveryPanel");
+    recovery->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    auto *recoveryLayout = new QVBoxLayout(recovery);
+    recoveryLayout->setContentsMargins(0, 0, 0, 0);
+    recoveryLayout->setSpacing(8);
+    auto *restoreTitle = new QLabel(tr("恢复到本地"), recovery);
+    restoreTitle->setProperty("role", "detailPanelTitle");
+    recoveryLayout->addWidget(restoreTitle);
+    auto *destinationFields = new QGridLayout;
+    target_ = new QLineEdit(recovery);
     target_->setObjectName("snapshotTarget");
-    target_->setPlaceholderText(tr("选择已有父目录"));
+    target_->setPlaceholderText(tr("选择本机已有的目标父目录"));
     target_->setReadOnly(true);
-    choose_ = new QPushButton(tr("选择父目录"), this);
+    choose_ = new QPushButton(tr("选择父目录"), recovery);
     choose_->setObjectName("snapshotChooseTarget");
-    newName_ = new QLineEdit(this);
+    newName_ = new QLineEdit(recovery);
     newName_->setObjectName("snapshotNewDirectory");
-    newName_->setPlaceholderText(tr("新目录名"));
+    newName_->setPlaceholderText(tr("输入新目录名"));
     newName_->setMaxLength(255);
-    restore_ = new QPushButton(tr("恢复快照…"), this);
+    restore_ = new QPushButton(tr("恢复快照…"), recovery);
     restore_->setObjectName("snapshotRestore");
-    destination->addWidget(target_, 1);
-    destination->addWidget(choose_);
-    destination->addWidget(newName_);
-    destination->addWidget(restore_);
-    layout_->addLayout(destination);
-    status_ = new QLabel(this);
+    restore_->setProperty("primary", true);
+    destinationFields->addWidget(target_, 0, 0);
+    destinationFields->addWidget(choose_, 0, 1);
+    destinationFields->addWidget(newName_, 1, 0);
+    destinationFields->addWidget(restore_, 1, 1);
+    recoveryLayout->addLayout(destinationFields);
+    destinationPreview_ = new ui::ElidedLabel(recovery);
+    destinationPreview_->setObjectName("snapshotDestinationPreview");
+    destinationPreview_->setProperty("role", "muted");
+    recoveryLayout->addWidget(destinationPreview_);
+    status_ = new QLabel(recovery);
     status_->setObjectName("snapshotStatus");
     status_->setTextFormat(Qt::PlainText);
     status_->setWordWrap(true);
-    layout_->addWidget(status_);
-
-    model_ = new SnapshotPlanModel(this);
-    auto *entries = new QTableView(this);
-    entries->setObjectName("snapshotEntries");
-    entries->setModel(model_);
-    entries->setSelectionBehavior(QAbstractItemView::SelectRows);
-    entries->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    entries->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-    entries->setColumnWidth(0, 150);
-    entries->setColumnWidth(1, 180);
-    entries->setColumnWidth(3, 210);
-    entries->setColumnWidth(4, 170);
-    entries->verticalHeader()->hide();
-    layout_->addWidget(entries, 2);
-    auto *navigation = new QHBoxLayout;
-    previousEntries_ = new QPushButton(tr("清单上一页"), this);
-    nextEntries_ = new QPushButton(tr("清单下一页"), this);
-    previousEntries_->setObjectName("snapshotEntriesPrevious");
-    nextEntries_->setObjectName("snapshotEntriesNext");
-    navigation->addWidget(previousEntries_);
-    navigation->addWidget(nextEntries_);
-    navigation->addStretch();
-    layout_->addLayout(navigation);
+    recoveryLayout->addWidget(status_);
+    rightLayout->addWidget(recovery);
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 1);
+    splitter->setSizes({300, 700});
+    layout_->addWidget(splitter, 1);
 
     restoreJob_ = new gui::SnapshotRestore(this);
-    auto *execution = new QHBoxLayout;
-    fileProgress_ = new QProgressBar(this);
+    auto *execution = new QVBoxLayout;
+    fileProgress_ = new QProgressBar(left);
     fileProgress_->setObjectName("snapshotFileProgress");
-    directoryProgress_ = new QProgressBar(this);
+    directoryProgress_ = new QProgressBar(left);
     directoryProgress_->setObjectName("snapshotDirectoryProgress");
-    restoreCancel_ = new QPushButton(tr("取消恢复"), this);
+    for (auto *progress : {fileProgress_, directoryProgress_})
+        progress->setStyleSheet("QProgressBar { min-height: 18px; max-height: 18px; }");
+    restoreCancel_ = new QPushButton(tr("取消恢复"), left);
     restoreCancel_->setObjectName("snapshotRestoreCancel");
-    execution->addWidget(fileProgress_, 1);
-    execution->addWidget(directoryProgress_, 1);
-    execution->addWidget(restoreCancel_);
-    layout_->addLayout(execution);
-    restoreStatus_ = new QLabel(this);
+    execution->addWidget(fileProgress_);
+    execution->addWidget(directoryProgress_);
+    execution->addWidget(restoreCancel_, 0, Qt::AlignLeft);
+    leftLayout->addLayout(execution);
+    restoreStatus_ = new QLabel(left);
     restoreStatus_->setObjectName("snapshotRestoreStatus");
     restoreStatus_->setTextFormat(Qt::PlainText);
     restoreStatus_->setWordWrap(true);
-    layout_->addWidget(restoreStatus_);
+    leftLayout->addWidget(restoreStatus_);
     for (auto *widget : {static_cast<QWidget *>(fileProgress_), static_cast<QWidget *>(directoryProgress_),
                          static_cast<QWidget *>(restoreCancel_), static_cast<QWidget *>(restoreStatus_)})
         widget->hide();
@@ -621,7 +795,28 @@ void SnapshotPage::receive(const Frame &frame) {
     }
 }
 
+void SnapshotPage::updatePresentation() {
+    const bool hasSnapshots = !snapshotRows_.empty();
+    snapshotsEmpty_->setVisible(!hasSnapshots);
+    snapshotCopy_->setEnabled(selected_.has_value());
+    snapshotId_->setValue(selected_ ? QString::fromStdString(selected_->id) : tr("请选择快照"));
+    snapshotRoot_->setValue(selected_ ? QString::fromUtf8(selected_->root) : QString{});
+    QString metadata;
+    if (selected_) {
+        metadata = tr("%1 · %2 个文件").arg(creationTime(selected_->createdAtSeconds)).arg(selected_->fileCount);
+        if (manifest_) metadata += " · " + gui::formatBytes(total_);
+    }
+    snapshotMeta_->setValue(metadata);
+    if (target_->text().isEmpty() || newName_->text().isEmpty()) {
+        destinationPreview_->setValue(tr("选择父目录，再输入新目录名。"));
+    } else {
+        const auto path = destination();
+        destinationPreview_->setValue(path.isEmpty() ? tr("新目录名无效。") : tr("目标路径：%1").arg(path));
+    }
+}
+
 void SnapshotPage::updateButtons() {
+    updatePresentation();
     const auto busy = restoring();
     const bool editable = !busy && !capture_ && !confirmation_;
     older_->setEnabled(!busy && !peer_ && nextBefore_.has_value());
@@ -632,10 +827,10 @@ void SnapshotPage::updateButtons() {
                          static_cast<QWidget *>(newName_)})
         widget->setEnabled(editable);
 #ifdef Q_OS_WIN
-    const bool localEndpoint = host_ == "127.0.0.1" && port_;
+    const bool localEndpoint = !host_.isEmpty() && port_;
     captureButton_->setEnabled(editable && !peer_ && localEndpoint && !root_->text().isEmpty());
     restore_->setEnabled(editable && !peer_ && !worker_ && preflightReady_ && localEndpoint);
-    restore_->setToolTip(host_ == "127.0.0.1" && port_ ? QString{} : tr("请通过本机地址或 SSH 隧道恢复。"));
+    restore_->setToolTip(localEndpoint ? QString{} : tr("请配置有效的服务器连接地址。"));
 #else
     captureButton_->setEnabled(false);
     restore_->setEnabled(false);
@@ -644,6 +839,10 @@ void SnapshotPage::updateButtons() {
     restoreCancel_->setEnabled(busy);
     previousEntries_->setEnabled(model_->previous());
     nextEntries_->setEnabled(model_->next());
+    emit connectionLockChanged();
+    const bool paged = model_->previous() || model_->next();
+    previousEntries_->setVisible(paged);
+    nextEntries_->setVisible(paged);
 }
 
 void SnapshotPage::schedulePreflight() {
@@ -655,7 +854,7 @@ void SnapshotPage::schedulePreflight() {
         if (currentFolder_ && manifest_->empty()) {
             status_->setText(planHeading() + tr(" · 没有已提交文件。空快照已保留，未创建本地目录。"));
         } else {
-            status_->setText(planHeading() + tr(" · %1 个文件 · %2 字节。正在检查预览…")
+            status_->setText(planHeading() + tr("\n%1 个文件 · %2 字节。正在检查预览…")
                 .arg(manifest_->size()).arg(total_));
             startPreflight();
         }
@@ -699,7 +898,7 @@ void SnapshotPage::startPreflight() {
                 preflightReady_ = !target_->text().isEmpty() && !newName_->text().isEmpty() &&
                     rootError.isEmpty() && issueCount == 0;
                 model_->setChecks(std::move(job->result));
-                const auto summary = planHeading() + tr(" · %1 个文件 · %2 字节 · %3 项需处理")
+                const auto summary = planHeading() + tr("\n%1 个文件 · %2 字节 · %3 项需处理")
                     .arg(manifest_->size()).arg(total_).arg(issueCount);
                 if (!rootError.isEmpty()) status_->setText(summary + "。" + rootError);
                 else if (manifest_->empty()) status_->setText(summary + tr("。这是空快照。"));

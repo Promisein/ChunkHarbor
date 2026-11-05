@@ -34,6 +34,11 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName("gui-transfer-probe");
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, args[1] + "/settings");
+    const auto directHost = qEnvironmentVariable("CHUNKHARBOR_TEST_TCP_HOST");
+    if (!directHost.isEmpty()) {
+        QSettings().setValue("connection/mode", "tcp");
+        QSettings().setValue("connection/tcpHost", directHost);
+    }
     QSettings().setValue("storage/logDirectory", args[1] + "/logs");
     QSettings().setValue("task/directory", args[2]);
     QSettings().setValue("task/prefix", args[4]);
@@ -44,6 +49,10 @@ int main(int argc, char **argv) {
     gui::BackupConfig config;
     config.directory = args[2];
     config.port = args[3].toUShort();
+    if (!directHost.isEmpty()) {
+        config.host = directHost;
+        config.direct = true;
+    }
     config.prefix = args[4];
     config.chunkSize = 32768;
     config.mode = args[6];

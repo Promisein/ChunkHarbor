@@ -3,6 +3,8 @@
 #include "chunkharbor/protocol/FrameCodec.h"
 #include "chunkharbor/protocol/Handshake.h"
 #include <QApplication>
+#include <QComboBox>
+#include <QLineEdit>
 #include <QElapsedTimer>
 #include <QLabel>
 #include <QPushButton>
@@ -140,6 +142,16 @@ int main(int argc, char **argv) {
             closing.reset(); // Socket/timers/callbacks must die with their QObject owner.
             QApplication::processEvents();
         }
+        silent = false;
+        auto *mode = window.findChild<QComboBox *>("connectionMode");
+        auto *host = window.findChild<QLineEdit *>("serverHost");
+        mode->setCurrentIndex(mode->findData("tcp"));
+        host->setText("localhost");
+        window.findChild<QSpinBox *>("serverPort")->setValue(server.serverPort());
+        detect->click();
+        waitFor([&] { return ready == 4; }, 3000, "direct hostname HELLO");
+        mode->setCurrentIndex(mode->findData("ssh"));
+        check(badge->text() == "未检测", "mode switch cancels prior health state");
         std::cout << "HELLO peer close, periodic silent timeout/recovery, endpoint cancellation, "
                      "refusal/retry and destruction passed\n";
     } catch (const std::exception &error) {

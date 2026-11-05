@@ -1,13 +1,14 @@
 #pragma once
 #include "chunkharbor/net/TcpConnection.h"
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 
 namespace chunkharbor {
 class TcpServer {
 public:
     TcpServer(EventLoop& loop, std::uint16_t port, std::chrono::milliseconds idleTimeout,
-              std::size_t maxConnections = 512);
+              std::size_t maxConnections = 512, const std::string &bindAddress = "127.0.0.1");
     ~TcpServer();
     std::uint16_t port() const noexcept { return port_; }
     void setMessageCallback(TcpConnection::MessageCallback cb) { messageCallback_ = std::move(cb); }

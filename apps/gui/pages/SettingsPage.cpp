@@ -4,10 +4,13 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
+#include <QHostAddress>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QVBoxLayout>
@@ -16,27 +19,71 @@ SettingsPage::SettingsPage(QWidget *parent)
     QSettings p;
     auto *connection = new InfoCard(tr("连接设置"), this);
     auto *f = new QFormLayout;
-    host = new QLineEdit("127.0.0.1", connection);
-    host->setReadOnly(true);
-    host->setToolTip(tr("通过本地地址或 SSH 隧道连接 Ubuntu。"));
+    connectionMode_ = new ui::ComboBox(connection);
+    connectionMode_->setObjectName("connectionMode");
+    connectionMode_->addItem(tr("SSH 隧道（本地转发）"), "ssh");
+    connectionMode_->addItem(tr("直接 TCP（局域网 / 虚拟机）"), "tcp");
+    connectionMode_->setCurrentIndex(p.value("connection/mode").toString() == "tcp" ? 1 : 0);
+    host = new QLineEdit(connection);
+    host->setObjectName("serverHost");
     port = new QSpinBox(connection);
     port->setObjectName("serverPort");
     port->setRange(1, 65535);
-    port->setValue(p.value("connection/port", 18787).toInt());
     auto *credentials = new QLineEdit(connection);
     credentials->setPlaceholderText(tr("认证功能将在 M7 提供"));
     credentials->setEnabled(false);
-    f->addRow(tr("服务器地址"), host);
-    f->addRow(tr("端口"), port);
+    auto *hostLabel = new QLabel(connection);
+    auto *portLabel = new QLabel(connection);
+    f->addRow(tr("连接方式"), connectionMode_);
+    f->addRow(hostLabel, host);
+    f->addRow(portLabel, port);
     f->addRow(tr("用户名 / 令牌"), credentials);
     connection->body()->addLayout(f);
     connectButton = new QPushButton(tr("检查连接"), connection);
     connectButton->setProperty("primary", true);
     connection->body()->addWidget(connectButton, 0, Qt::AlignLeft);
-    status = new QLabel(tr("尚未连接，请先启动服务端与 SSH 隧道。"), connection);
+    auto *connectionHint = new QLabel(connection);
+    connectionHint->setWordWrap(true);
+    connection->body()->addWidget(connectionHint);
+    status = new QLabel(connection);
     status->setWordWrap(true);
     connection->body()->addWidget(status);
     layout_->addWidget(connection);
+    const auto loadConnection = [=] {
+        const bool direct = connectionMode_->currentData() == "tcp";
+        const QSignalBlocker hostSignals(host), portSignals(port);
+        const QSettings settings;
+        host->setReadOnly(!direct);
+        host->setText(direct ? settings.value("connection/tcpHost").toString() : "127.0.0.1");
+        host->setPlaceholderText(direct ? tr("输入 Ubuntu IPv4 地址或主机名") : QString{});
+        port->setValue(direct ? settings.value("connection/tcpPort", 8787).toInt()
+            : settings.value("connection/sshPort", settings.value("connection/port", 18787)).toInt());
+        hostLabel->setText(direct ? tr("服务器地址") : tr("本地转发地址"));
+        portLabel->setText(direct ? tr("服务器端口") : tr("本地转发端口"));
+        connectionHint->setText(direct ? tr("直接 TCP 不提供 SSH 加密或身份认证，仅用于可信网络。")
+            : tr("请先建立 SSH 本地转发。隧道不可达时连接会失败。"));
+    };
+    loadConnection();
+    status->setText(tr("尚未连接。"));
+    connect(connectionMode_, &QComboBox::currentIndexChanged, this, [=] {
+        QSettings().setValue("connection/mode", connectionMode_->currentData());
+        loadConnection();
+        emit connectionChanged();
+        emit preferencesChanged();
+    });
+    const auto saveEndpoint = [this] {
+        QSettings settings;
+        if (connectionMode_->currentData() == "tcp") {
+            settings.setValue("connection/tcpHost", host->text().trimmed());
+            settings.setValue("connection/tcpPort", port->value());
+        } else {
+            settings.setValue("connection/sshPort", port->value());
+        }
+        emit connectionChanged();
+        emit preferencesChanged();
+    };
+    connect(host, &QLineEdit::textChanged, this, saveEndpoint);
+    connect(port, qOverload<int>(&QSpinBox::valueChanged), this, saveEndpoint);
     auto *backup = new InfoCard(tr("备份设置"), this);
     auto *b = new QFormLayout;
     chunk_ = new ui::ComboBox(backup);
@@ -67,11 +114,8 @@ SettingsPage::SettingsPage(QWidget *parent)
         startup_->addItem(names[i], ids[i]);
     startup_->setCurrentIndex(
         qMax(0, startup_->findData(p.value("appearance/startup", "dashboard"))));
-    logDirectory_ = new QLineEdit(
-        p.value("storage/logDirectory",
-                QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/logs")
-            .toString(),
-        appearance);
+    logDirectory_ = new QLineEdit(appearance);
+    logDirectory_->setReadOnly(true);
     logDirectory_->setObjectName("logDirectory");
     a->addRow(tr("主题"), new QLabel(tr("浅色（当前版本固定）"), appearance));
     a->addRow(tr("启动页面"), startup_);
@@ -81,24 +125,22 @@ SettingsPage::SettingsPage(QWidget *parent)
     layout_->addStretch();
     auto save = [this] {
         QSettings v;
-        v.setValue("connection/port", port->value());
         v.setValue("backup/chunk", chunk_->currentData());
         v.setValue("backup/resume", resume_->isChecked());
         v.setValue("backup/exclusions", exclusions_->text());
         v.setValue("appearance/startup", startup_->currentData());
-        v.setValue("storage/logDirectory", logDirectory_->text());
         v.sync();
         emit preferencesChanged();
     };
-    connect(port, qOverload<int>(&QSpinBox::valueChanged), this, [save](int) { save(); });
     connect(chunk_, &QComboBox::currentIndexChanged, this, [save](int) { save(); });
     connect(startup_, &QComboBox::currentIndexChanged, this, [save](int) { save(); });
     connect(resume_, &QCheckBox::toggled, this, [save](bool) { save(); });
     connect(exclusions_, &QLineEdit::editingFinished, this, save);
-    connect(logDirectory_, &QLineEdit::editingFinished, this, save);
 }
 gui::BackupConfig SettingsPage::backupConfig() const {
     gui::BackupConfig c;
+    c.host = serverHost();
+    c.direct = connectionMode_->currentData() == "tcp";
     c.port = static_cast<quint16>(port->value());
     c.chunkSize = chunk_->currentData().toUInt();
     c.resume = resume_->isChecked();
@@ -106,6 +148,19 @@ gui::BackupConfig SettingsPage::backupConfig() const {
     for (auto &s : c.exclusions)
         s = s.trimmed();
     return c;
+}
+QString SettingsPage::serverHost() const {
+    if (connectionMode_->currentData() == "ssh") return "127.0.0.1";
+    const auto value = host->text().trimmed().toLower();
+    const QHostAddress address(value);
+    if (address.protocol() == QAbstractSocket::IPv4Protocol) return address.toString();
+    static const QRegularExpression dns(
+        R"(^(?=.*[a-z])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.?$)");
+    return value.size() <= 253 && dns.match(value).hasMatch() ? value : QString{};
+}
+void SettingsPage::setLocalPort(quint16 value) {
+    connectionMode_->setCurrentIndex(0);
+    port->setValue(value);
 }
 QString SettingsPage::startupPage() const { return startup_->currentData().toString(); }
 QString SettingsPage::logDirectory() const { return logDirectory_->text().trimmed(); }

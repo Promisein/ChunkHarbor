@@ -12,6 +12,8 @@
 namespace gui {
 struct BackupConfig {
     QString directory, prefix, stateDirectory;
+    QString host = "127.0.0.1";
+    bool direct = false;
     quint16 port = 18787;
     quint32 chunkSize = 262144;
     QString mode = "auto";

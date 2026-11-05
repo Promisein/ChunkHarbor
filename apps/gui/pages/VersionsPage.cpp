@@ -66,19 +66,37 @@ class VersionDelegate final : public QStyledItemDelegate {
 };
 }
 
+// Let small pages end at the last row, while a full page can shrink and scroll.
+class ServerHistoryRows final : public QTableWidget {
+  public:
+    using QTableWidget::QTableWidget;
+    QSize sizeHint() const override {
+        return {QTableWidget::sizeHint().width(),
+                horizontalHeader()->sizeHint().height() + verticalHeader()->length() + 2 * frameWidth()};
+    }
+};
+
 class ServerHistoryPanel final : public QWidget {
   public:
-    explicit ServerHistoryPanel(QWidget *parent, DownloadController *download)
+    explicit ServerHistoryPanel(QWidget *parent, DownloadController *download, QPushButton *source)
         : QWidget(parent), download_(download) {
         auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(12);
         auto *controls = new QHBoxLayout;
+        auto *back = new QPushButton(tr("返回本地提交记录"), this);
+        back->setObjectName("serverHistoryBack");
+        controls->addWidget(back);
+        connect(back, &QPushButton::clicked, source, [source] { source->setChecked(false); });
         path_ = new QLineEdit(this);
         path_->setObjectName("serverHistoryPath");
         path_->setMaxLength(4096);
+        path_->setMinimumWidth(120);
         path_->setPlaceholderText(tr("逻辑路径，例如 docs/readme.txt"));
         controls->addWidget(path_, 1);
         auto *first = new QPushButton(tr("查询最新"), this);
         first->setObjectName("serverHistoryFirst");
+        first->setProperty("primary", true);
         next_ = new QPushButton(tr("更早版本"), this);
         next_->setObjectName("serverHistoryNext");
         cancel_ = new QPushButton(tr("取消查询"), this);
@@ -90,22 +108,77 @@ class ServerHistoryPanel final : public QWidget {
         status_->setWordWrap(true);
         status_->setTextFormat(Qt::PlainText);
         layout->addWidget(status_);
-        rows_ = new QTableWidget(0, 6, this);
+        auto *splitter = new QSplitter(Qt::Horizontal, this);
+        splitter->setObjectName("serverHistorySplitter");
+        ui::browserSplitter(splitter);
+        auto *list = new QWidget(splitter);
+        list->setMinimumWidth(360);
+        auto *listLayout = new QVBoxLayout(list);
+        listLayout->setContentsMargins(0, 0, 0, 0);
+        listLayout->setSpacing(10);
+        auto *title = new QLabel(tr("服务器历史版本"), list);
+        title->setProperty("role", "detailPanelTitle");
+        listLayout->addWidget(title);
+        file_ = new ui::ElidedLabel(list);
+        file_->setProperty("role", "muted");
+        listLayout->addWidget(file_);
+
+        rows_ = new ServerHistoryRows(0, 7, list);
         rows_->setObjectName("serverHistoryRows");
-        rows_->setHorizontalHeaderLabels({tr("序号"), tr("版本 ID"), tr("字节数"),
-            tr("SHA-256"), tr("提交时间（本地）"), tr("状态")});
-        rows_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        rows_->setHorizontalHeaderLabels({tr("序号"), tr("版本 ID"), tr("大小"),
+            tr("SHA-256"), tr("提交时间（本地）"), tr("状态"), tr("SHA-256 前缀")});
+        ui::browserList(rows_);
         rows_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        rows_->setShowGrid(false);
+        rows_->setWordWrap(false);
         rows_->verticalHeader()->hide();
-        rows_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-        rows_->setColumnWidth(1, 225);
-        rows_->setColumnWidth(3, 320);
-        rows_->setSelectionMode(QAbstractItemView::SingleSelection);
-        layout->addWidget(rows_, 1);
-        restore_ = new QPushButton(tr("下载此版本"), this);
+        rows_->verticalHeader()->setDefaultSectionSize(ui::BrowserRowHeight);
+        rows_->hideColumn(1);
+        rows_->hideColumn(3);
+        auto *header = rows_->horizontalHeader();
+        header->moveSection(header->visualIndex(5), 1);
+        header->moveSection(header->visualIndex(4), 2);
+        header->setSectionResizeMode(QHeaderView::Stretch);
+        header->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+        rows_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+        listLayout->addWidget(rows_);
+        empty_ = new QLabel(list);
+        empty_->setObjectName("serverHistoryEmpty");
+        empty_->setProperty("role", "browserEmptyState");
+        empty_->setWordWrap(true);
+        empty_->setTextFormat(Qt::PlainText);
+        listLayout->addWidget(empty_);
+        listLayout->addStretch(1);
+
+        auto *right = new QWidget(splitter);
+        auto *rightLayout = new QVBoxLayout(right);
+        rightLayout->setContentsMargins(0, 0, 0, 0);
+        auto *details = new InfoCard(tr("版本详情"), right);
+        details->setObjectName("serverHistoryDetails");
+        ui::detailPanel(details);
+        right->setMinimumWidth(details->minimumWidth());
+        right->setMaximumWidth(details->maximumWidth());
+        id_ = ui::detailField(details, tr("版本 ID"), "serverHistoryVersionId", true);
+        state_ = ui::detailField(details, tr("版本状态"), "serverHistoryVersionState");
+        time_ = ui::detailField(details, tr("提交时间（本地）"), "serverHistoryVersionTime");
+        size_ = ui::detailField(details, tr("文件大小"), "serverHistoryVersionSize");
+        sha_ = ui::detailField(details, tr("内容 SHA-256"), "serverHistoryVersionSha", true);
+        idCopy_ = details->findChild<QPushButton *>("serverHistoryVersionIdCopy");
+        shaCopy_ = details->findChild<QPushButton *>("serverHistoryVersionShaCopy");
+        restore_ = new QPushButton(tr("下载此版本"), details);
         restore_->setObjectName("serverHistoryRestore");
-        layout->addWidget(restore_, 0, Qt::AlignLeft);
-        connect(rows_, &QTableWidget::currentCellChanged, this, [this] { updateRestore(); });
+        restore_->setProperty("primary", true);
+        details->body()->addWidget(restore_);
+        rightLayout->addWidget(details);
+        rightLayout->addStretch(1);
+        splitter->setStretchFactor(0, 1);
+        splitter->setStretchFactor(1, 0);
+        splitter->setSizes({650, 350});
+        layout->addWidget(splitter, 1);
+        connect(rows_, &QTableWidget::currentCellChanged, this, [this] {
+            updateDetails();
+            updateRestore();
+        });
         connect(restore_, &QPushButton::clicked, this, [this] { restoreSelected(); });
         if (download_)
             connect(download_, &DownloadController::changed, this, [this] { updateRestore(); });
@@ -129,6 +202,26 @@ class ServerHistoryPanel final : public QWidget {
     void leave() { if (peer_) finish(tr("查询已取消。")); }
 
   private:
+    void updateDetails() {
+        const int row = rows_->currentRow();
+        const bool selected = row >= 0 && static_cast<std::size_t>(row) < page_.versions.size();
+        idCopy_->setEnabled(selected);
+        shaCopy_->setEnabled(selected);
+        id_->setValue(selected ? rows_->item(row, 1)->text() : tr("选择版本查看详情"));
+        state_->setValue(selected ? rows_->item(row, 5)->text() : QString{});
+        time_->setValue(selected ? rows_->item(row, 4)->text() : QString{});
+        size_->setValue(selected ? rows_->item(row, 2)->text() : QString{});
+        sha_->setValue(selected ? rows_->item(row, 3)->text() : QString{});
+    }
+    void updateListPresentation() {
+        const bool hasRows = rows_->rowCount() > 0;
+        rows_->setVisible(hasRows);
+        rows_->updateGeometry();
+        empty_->setVisible(!hasRows);
+        empty_->setText(tr("暂无版本可显示"));
+        file_->setValue(page_.path.empty() ? path_->text() : QString::fromUtf8(page_.path));
+        updateDetails();
+    }
     bool canRestore() const {
         return download_ && !download_->busy() && !peer_ && rows_->currentRow() >= 0 &&
                static_cast<std::size_t>(rows_->currentRow()) < page_.versions.size();
@@ -161,6 +254,7 @@ class ServerHistoryPanel final : public QWidget {
         status_->setText(message);
         cancel_->setEnabled(false);
         next_->setEnabled(nextBefore_.has_value());
+        updateListPresentation();
         updateRestore();
     }
     void reset() {
@@ -186,6 +280,7 @@ class ServerHistoryPanel final : public QWidget {
         status_->setText(tr("正在查询 %1:%2…").arg(host_).arg(port_));
         auto *peer = new QtTcpTransport(this);
         peer_ = peer;
+        updateListPresentation();
         updateRestore();
         connect(peer, &QtTcpTransport::ready, this, [this, peer, payload] {
             if (peer_ != peer) return;
@@ -223,6 +318,7 @@ class ServerHistoryPanel final : public QWidget {
 
     void showPage(chunkharbor::protocol::VersionsResult result) {
         page_ = std::move(result);
+        const QSignalBlocker blocker(rows_);
         rows_->setCurrentCell(-1, -1);
         rows_->setRowCount(static_cast<int>(page_.versions.size()));
         int index = 0;
@@ -231,11 +327,12 @@ class ServerHistoryPanel final : public QWidget {
                 ? QDateTime::fromSecsSinceEpoch(static_cast<qint64>(*version.committedAtSeconds)).toString("yyyy-MM-dd HH:mm:ss")
                 : tr("未知");
             const QStringList cells{QString::number(version.sequence), QString::fromStdString(version.versionId),
-                QString::number(version.size), QString::fromStdString(version.sha256), time,
-                version.current ? tr("当前") : tr("历史")};
+                gui::formatBytes(version.size), QString::fromStdString(version.sha256), time,
+                version.current ? tr("当前") : tr("历史"),
+                QString::fromStdString(version.sha256.substr(0, 8)) + "…"};
             for (int col = 0; col < cells.size(); ++col) {
                 auto *item = new QTableWidgetItem(cells[col]);
-                item->setToolTip(ui::plainTooltip(cells[col]));
+                item->setToolTip(ui::plainTooltip(col == 6 ? cells[3] : cells[col]));
                 rows_->setItem(index, col, item);
             }
             ++index;
@@ -247,7 +344,9 @@ class ServerHistoryPanel final : public QWidget {
 
     QLineEdit *path_;
     QPushButton *next_, *cancel_, *restore_;
-    QLabel *status_;
+    QLabel *status_, *empty_;
+    ui::ElidedLabel *file_, *id_, *state_, *time_, *size_, *sha_;
+    QPushButton *idCopy_, *shaCopy_;
     QTableWidget *rows_;
     DownloadController *download_;
     chunkharbor::protocol::VersionsResult page_;
@@ -352,11 +451,11 @@ VersionsPage::VersionsPage(WorkspaceStore *store, QWidget *parent, DownloadContr
     source->setObjectName("versionSource");
     layout_->addWidget(source, 0, Qt::AlignLeft);
     layout_->addWidget(splitter, 1);
-    serverHistory_ = new ServerHistoryPanel(this, download);
+    serverHistory_ = new ServerHistoryPanel(this, download, source);
     serverHistory_->hide();
     layout_->addWidget(serverHistory_, 1);
     connect(source, &QPushButton::toggled, this, [=](bool remote) {
-        source->setText(remote ? tr("返回本机提交记录") : tr("查看服务器历史"));
+        source->setVisible(!remote);
         splitter->setVisible(!remote);
         serverHistory_->setVisible(remote);
         if (remote && list->currentItem()) serverHistory_->usePath(list->currentItem()->text());

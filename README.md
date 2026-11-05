@@ -1,10 +1,12 @@
 # ChunkHarbor
 
+Windows GUI 支持可信虚拟机网络上的直接 TCP 和既有 SSH 本地转发。Ubuntu 默认监听回环，直连需显式配置 `--bind`。见 [R2.6 连接指南](docs/R2_6_CONNECTIONS.md)。
+
 后续开发需求已冻结，采用 [R1–R8 路线图](docs/ROADMAP_V3.md)：单用户可靠性 → 单服务器多用户隔离 → 性能与规模验证。M0–M7 保留为原始历史编号。当前源码、跨机器版本及验证边界见 [2026-11-03 审计](docs/PROJECT_AUDIT_2026-11-03.md)，每轮状态见 [PROGRESS 顶部](docs/PROGRESS.md)。
 
 R1已于2026-11-03按用户确认完成。R2.1–R2.4已支持当前文件下载、历史版本查询、指定版本下载和服务端目录快照。R2.5.1支持 Windows GUI 浏览快照并生成只读恢复预览。操作和安全边界见 [R2.5.1 快照预览](docs/R2_5_1_SNAPSHOT_PREVIEW.md)。各轮实际结果见 [PROGRESS](docs/PROGRESS.md)。
 
-C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。Linux CLI及Windows GUI支持当前单文件下载校验恢复；TLS/认证未实现。单文件上限64MiB，仅用于可信loopback/SSH开发。
+C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。Linux CLI及Windows GUI支持当前单文件下载校验恢复；TLS/认证未实现。单文件上限64MiB，仅用于可信本机、虚拟机测试网络或 SSH 隧道。
 
 M4使用、详细人工复现及自动恢复测试见[M4使用](docs/M4_USAGE.md)；真实构建/测试证据见[M4验证](docs/M4_VALIDATION.md)。旧`upload`命令保持首次上传/已有目标拒绝的语义；重复增量备份使用`backup`。版本对象与最新副本分别存储，尚无历史版本GC或总空间配额。
 

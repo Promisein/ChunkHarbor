@@ -38,7 +38,7 @@ bool SnapshotRestore::start(QString host, quint16 port, SnapshotInfo snapshot,
     std::shared_ptr<const Manifest> manifest, QString target) {
     Q_ASSERT(QThread::currentThread() == thread());
     if (busy_ || !manifest || manifest->size() != snapshot.fileCount || manifest->size() > MaxSnapshotFiles ||
-        host != "127.0.0.1" || !port || target.isEmpty()) return false;
+        host.isEmpty() || !port || target.isEmpty()) return false;
     if (worker_.joinable()) worker_.join();
     quint64 size = 0;
     for (const auto &entry : *manifest) {

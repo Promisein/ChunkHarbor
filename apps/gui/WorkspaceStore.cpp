@@ -2,6 +2,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -44,9 +45,12 @@ WorkspaceStore::WorkspaceStore(QString directory, QObject *parent) : QObject(par
     directory_ = directory.isEmpty()
                      ? QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
                      : directory;
-    logDirectory_ = QDir(directory_).filePath("logs");
+    const auto logRoot = directory.isEmpty() ? QString::fromUtf8(CHUNKHARBOR_PROJECT_ROOT) : directory;
+    logDirectory_ = QDir(logRoot).absoluteFilePath("logs");
     QDir().mkpath(directory_);
-    QDir().mkpath(logDirectory_);
+    if (QFileInfo(logDirectory_).isSymLink() || !QDir().mkpath(logDirectory_) ||
+        QFileInfo(logDirectory_).canonicalPath() != QFileInfo(logRoot).canonicalFilePath())
+        logDirectory_.clear();
     try {
         auto a = readArray(QDir(directory_).filePath("history.json"), 4 * 1024 * 1024);
         if (a.size() > 500)
@@ -118,12 +122,15 @@ void WorkspaceStore::addCommit(const gui::FileRecord &f) {
 }
 void WorkspaceStore::setLogDirectory(const QString &path) {
     auto target = QDir::cleanPath(path);
-    if (target.isEmpty() || !QDir::isAbsolutePath(target) || !QDir().mkpath(target)) {
+    if (logDirectory_.isEmpty() || target != QDir::cleanPath(logDirectory_) ||
+        QFileInfo(target).isSymLink() || !QFileInfo(target).isDir()) {
         emit storageError("日志目录不可用。");
         return;
     }
     logDirectory_ = target;
     try {
+        if (QFileInfo(QDir(logDirectory_).filePath("activity.json")).isSymLink())
+            throw std::runtime_error("log file is a symbolic link");
         auto a = readArray(QDir(logDirectory_).filePath("activity.json"), 2 * 1024 * 1024);
         if (a.size() > 500)
             throw std::runtime_error("too many logs");
@@ -152,7 +159,9 @@ void WorkspaceStore::appendLog(const QString &level, const QString &message) {
     QJsonArray a;
     for (const auto &l : logs_)
         a.append(QJsonObject{{"level", l.level}, {"time", l.time}, {"message", l.message}});
-    if (!writeArray(QDir(logDirectory_).filePath("activity.json"), a))
+    if (logDirectory_.isEmpty() || QFileInfo(logDirectory_).isSymLink() ||
+        QFileInfo(QDir(logDirectory_).filePath("activity.json")).isSymLink() ||
+        !writeArray(QDir(logDirectory_).filePath("activity.json"), a))
         emit storageError("本机日志保存失败。");
     emit logsChanged();
 }

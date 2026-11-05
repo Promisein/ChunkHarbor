@@ -14,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QNetworkProxy>
 #include <QTcpSocket>
 #include <algorithm>
 #include <filesystem>
@@ -31,7 +32,7 @@ std::string utf8(const QString &s) { return narrow(s.toUtf8()); }
 QString qstr(const std::string &s) {
     return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size()));
 }
-QString friendly(const std::exception &e) {
+QString friendly(const std::exception &e, bool direct) {
     const auto detail = qstr(e.what());
     const auto key = detail.toLower();
     QString message;
@@ -49,7 +50,8 @@ QString friendly(const std::exception &e) {
         message = "源文件或目录已变化，请恢复原文件以续传，或重新扫描后创建备份。";
     else if (key.contains("timeout") || key.contains("timed out") || key.contains("connection") ||
              key.contains("disconnected") || key.contains("socket"))
-        message = "连接中断或服务器未响应，请检查SSH隧道和服务端后重试；已确认进度会保留。";
+        message = direct ? "直接 TCP 连接失败或中断，请检查服务器地址、监听端口与网络；已确认进度会保留。"
+                         : "SSH 转发端点连接失败或中断，请检查隧道与服务端；已确认进度会保留。";
     else if (key.contains("base") || key.contains("conflict") || key.contains("exists"))
         message = "远端版本与预览不一致，或目标已存在，请重新扫描；完整上传仅用于首次备份。";
     else if (key.contains("capability"))
@@ -117,15 +119,17 @@ class Peer {
     gui::RunControl &control;
 
   public:
-    Peer(quint16 port, gui::RunControl &c) : control(c) {
+    Peer(const gui::BackupConfig &config, gui::RunControl &c) : control(c) {
+        socket.setProxy(QNetworkProxy::NoProxy);
         socket.setReadBufferSize(HeaderSize + MaxControlPayload + 1);
-        socket.connectToHost(QHostAddress::LocalHost, port);
+        socket.connectToHost(config.host, config.port, QIODevice::ReadWrite, QAbstractSocket::IPv4Protocol);
         QElapsedTimer clock;
         clock.start();
         while (socket.state() != QAbstractSocket::ConnectedState) {
             cancelled(control);
             if (clock.elapsed() > 5000 || socket.state() == QAbstractSocket::UnconnectedState)
-                throw std::runtime_error("connection failed");
+                throw std::runtime_error(utf8(QString("connection failed %1:%2: %3")
+                    .arg(config.host).arg(config.port).arg(socket.errorString())));
             socket.waitForConnected(100);
         }
         Hello h;
@@ -329,6 +333,7 @@ SourceSnapshot snapshot(const std::shared_ptr<Owned> &o, const QString &logical,
 namespace gui {
 RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRecord> &pinned,
                     RunControl &control, const WorkerCallbacks &cb) {
+    const auto endpoint = QString("%1%2:%3").arg(config.direct ? "tcp:" : "", config.host).arg(config.port);
     RunResult result;
     const bool automatic = config.mode == "auto";
     TransferProgress progress;
@@ -359,7 +364,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
     };
     try {
         cancelled(control);
-        if (!config.port || !config.chunkSize || config.chunkSize > MaxChunkDataSize ||
+        if (config.host.isEmpty() || !config.port || !config.chunkSize || config.chunkSize > MaxChunkDataSize ||
             (!automatic && config.mode != "full" && config.mode != "resume" && config.mode != "incremental"))
             throw std::runtime_error("invalid task configuration");
         if (config.stateDirectory.isEmpty())
@@ -387,7 +392,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                 throw std::runtime_error(
                     "directory entry limit exceeded (10000 including excluded/error entries)");
             scannedPaths.insert(r.logicalPath);
-            r.endpoint = QString("127.0.0.1:%1").arg(config.port);
+            r.endpoint = endpoint;
             if (e->excluded) {
                 r.status = "已跳过";
                 r.change = "已排除";
@@ -432,7 +437,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                 auto identity = saved.value("identity").toObject();
                 if (identity.value("root").toString() != root ||
                     identity.value("endpoint").toString() !=
-                        QString("127.0.0.1:%1").arg(config.port) ||
+                        endpoint ||
                     saved.value("completed").toBool())
                     continue;
                 const auto relative = QDir(root).relativeFilePath(identity.value("local").toString());
@@ -562,7 +567,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                             saved.value("base").toString() == "absent" ? std::optional<VersionId>{}
                                 : std::optional<VersionId>{id(saved.value("base").toString())}};
                         const auto response = [&] {
-                            Peer queryPeer(config.port, control);
+                            Peer queryPeer(config, control);
                             return queryPeer.request({28, 2, encodeQueryDelta({checkpoint->session})});
                         }();
                         if (response.type != 29)
@@ -578,7 +583,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                             recovery.cancelled = [&] { return control.checkpoint(); };
                             recovery.base.kind = checkpoint->base ? BaseSelector::Kind::Exact : BaseSelector::Kind::Absent;
                             if (checkpoint->base) recovery.base.versionId = *checkpoint->base;
-                            Peer recoveryPeer(config.port, control);
+                            Peer recoveryPeer(config, control);
                             const auto recovered = runDelta(source, [&](const Frame &f) { return recoveryPeer.request(f); }, recovery);
                             if (!recovered.result) throw std::runtime_error("missing recovered commit result");
                             committedSession = true;
@@ -624,7 +629,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                             DeltaOptions checkBase = options;
                             checkBase.mode = DeltaMode::Preview;
                             checkBase.save = [](const DeltaCheckpoint &) {};
-                            Peer baselinePeer(config.port, control);
+                            Peer baselinePeer(config, control);
                             (void)runDelta(source, [&](const Frame &f) { return baselinePeer.request(f); }, checkBase);
                         }
                     }
@@ -667,7 +672,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                     progress.totalBytes = progress.totalBytes - expectedBytes + actual;
                     expectedBytes = actual;
                 };
-                Peer peer(config.port, control);
+                Peer peer(config, control);
                 std::optional<PlanValidator> historyPlan;
                 auto outcome = runDelta(
                     source,
@@ -828,7 +833,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
                 r.change = "错误";
                 r.modeAllowed = false;
                 r.strategy = BackupStrategy::Error;
-                r.note = friendly(e);
+                r.note = friendly(e, config.direct);
                 entry(r);
                 log("错误", r.logicalPath + "：" + r.note);
                 ++result.failed;
@@ -841,7 +846,7 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
             log("警告", "任务已取消，已确认进度保留，可重试续传。");
         } else {
             ++result.failed;
-            log("错误", friendly(e));
+            log("错误", friendly(e, config.direct));
         }
     }
     result.cancelled = result.cancelled || control.cancelled.load();

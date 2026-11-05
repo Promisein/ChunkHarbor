@@ -74,7 +74,7 @@ void FileListController::previous() { if (hasPrevious()) start(Action::Previous,
 void FileListController::start(Action action, std::string cursor) {
     Q_ASSERT(QThread::currentThread() == thread());
     if (busy_) return;
-    if (host_ != "127.0.0.1" || !port_) { fail(tr("文件列表仅支持本地地址或 SSH 隧道。")); return; }
+    if (host_.isEmpty() || !port_) { fail(tr("请配置有效的服务器连接地址。")); return; }
     action_ = action;
     pendingCursor_ = std::move(cursor);
     busy_ = true;

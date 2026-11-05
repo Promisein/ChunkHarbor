@@ -6,6 +6,7 @@
 #include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QTcpSocket>
+#include <QNetworkProxy>
 #include <QThread>
 #include <algorithm>
 #include <atomic>
@@ -27,8 +28,9 @@ class DownloadPeer {
     const std::function<void()> &check_;
   public:
     DownloadPeer(const QString &host, quint16 port, const std::function<void()> &check) : check_(check) {
+        socket_.setProxy(QNetworkProxy::NoProxy);
         socket_.setReadBufferSize(HeaderSize + DataChunkHeaderSize + MaxDownloadChunkSize + 1);
-        socket_.connectToHost(host, port);
+        socket_.connectToHost(host, port, QIODevice::ReadWrite, QAbstractSocket::IPv4Protocol);
         QElapsedTimer clock;
         clock.start();
         while (socket_.state() != QAbstractSocket::ConnectedState) {
@@ -169,7 +171,7 @@ bool DownloadController::start(QString host, quint16 port, ListedFile file, QStr
     if (busy_) return false;
     if (worker_.joinable()) worker_.join();
     // Persist exactly the user's selected endpoint and version; never query a new current version.
-    if (host != "127.0.0.1" || !port || target.isEmpty() || file.versionId.empty()) return false;
+    if (host.isEmpty() || !port || target.isEmpty() || file.versionId.empty()) return false;
     busy_ = true;
     succeeded_ = false;
     received_ = 0;

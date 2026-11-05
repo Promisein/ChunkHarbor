@@ -45,7 +45,7 @@ Windows PowerShell另开终端，保持隧道运行：
 ssh -N -o ExitOnForwardFailure=yes -L 18787:127.0.0.1:8787 miniob-ubuntu
 ```
 
-没有该SSH别名时，替换为`Ubuntu用户名@Ubuntu地址`。GUI设置端口18787，点击检查连接。顶部与总览显示未检查/检查中/可达/不可达；用户首次检查后，每次HELLO完成15秒后自动复查，单次超时5秒。“可达”只代表最近协议检查，不保证上传或磁盘健康。修改端口停止旧检查并回到未检查，需要重新点击；任务运行期间设置锁定，独立健康复查仍可运行。细节见[R1健康检查](R1_GUI_HEALTH.md)。
+没有该 SSH 别名时，替换为 `Ubuntu用户名@Ubuntu地址`。GUI 选择「SSH 隧道（本地转发）」，填写 18787 并检查连接。若 Windows 可直接访问 Ubuntu 私有 IPv4，可改用「直接 TCP（局域网 / 虚拟机）」并填写 Ubuntu 地址和服务端端口。两种配置独立保存。详见 [R2.6 连接指南](R2_6_CONNECTIONS.md) 和 [R1 健康检查](R1_GUI_HEALTH.md)。
 
 ## 手工体验真实备份
 

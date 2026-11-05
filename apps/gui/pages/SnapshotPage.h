@@ -16,6 +16,7 @@ class QThread;
 class SnapshotPlanModel;
 struct SnapshotCheckJob;
 namespace gui { class SnapshotRestore; }
+namespace ui { class ElidedLabel; }
 
 class SnapshotPage final : public WorkspacePage {
     Q_OBJECT
@@ -28,6 +29,7 @@ class SnapshotPage final : public WorkspacePage {
     bool settlingCapture() const;
     void cancelCaptureBeforeSend();
   signals:
+    void connectionLockChanged();
     void restoreFinished(const QString &residue);
     void captureSettled(bool uncertain);
 
@@ -53,6 +55,7 @@ class SnapshotPage final : public WorkspacePage {
     void sendRequest();
     void receive(const chunkharbor::protocol::Frame &);
     void updateButtons();
+    void updatePresentation();
     void schedulePreflight();
     void startPreflight();
     QString destination() const;
@@ -60,7 +63,9 @@ class SnapshotPage final : public WorkspacePage {
     void showRestoreProgress();
 
     QLineEdit *root_, *target_, *newName_;
-    QLabel *status_, *restoreStatus_;
+    QLabel *status_, *restoreStatus_, *snapshotsEmpty_;
+    ui::ElidedLabel *snapshotId_, *snapshotRoot_, *snapshotMeta_, *destinationPreview_;
+    QPushButton *snapshotCopy_;
     QPushButton *older_, *cancel_, *previousEntries_, *nextEntries_, *restore_, *restoreCancel_;
     QPushButton *refresh_, *choose_, *captureButton_;
     QProgressBar *fileProgress_, *directoryProgress_;

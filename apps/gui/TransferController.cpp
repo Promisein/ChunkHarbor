@@ -6,7 +6,7 @@
 namespace {
 bool sameConfiguration(const gui::BackupConfig &a, const gui::BackupConfig &b) {
     return QDir::cleanPath(a.directory) == QDir::cleanPath(b.directory) && a.prefix == b.prefix &&
-           a.port == b.port && a.chunkSize == b.chunkSize && a.mode == b.mode &&
+           a.host == b.host && a.direct == b.direct && a.port == b.port && a.chunkSize == b.chunkSize && a.mode == b.mode &&
            a.exclusions == b.exclusions && a.resume == b.resume;
 }
 } // namespace
@@ -79,7 +79,7 @@ void TransferController::launch(gui::BackupConfig config, bool preview) {
         return;
     if (worker_.joinable())
         worker_.join();
-    if (config.directory.isEmpty() || !config.port) {
+    if (config.directory.isEmpty() || config.host.isEmpty() || !config.port) {
         emit finished(tr("请选择本地目录并设置有效端口。"), false);
         return;
     }

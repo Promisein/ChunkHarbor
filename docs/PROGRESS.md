@@ -1,5 +1,57 @@
 # ChunkHarbor 开发进度
 
+## R2.6 直接 TCP 与 SSH 隧道（2026-11-05）
+
+- Ubuntu 服务端新增显式 IPv4 `--bind`，默认回环。Windows 设置独立保存两个连接配置，旧 SSH 端口继续读取。健康与业务统一选定端点，端点变更使预览失效，任务执行时锁定设置。
+- SSH 检查点键保持兼容，直连使用独立标识并继续原有会话校验。复用协议、存储和安全恢复流程。
+- Ubuntu 隔离构建完整 CTest **57/57**。真实 Windows→Ubuntu 私有 IPv4 和 SSH 转发均完成备份、增量、历史与当前下载、快照及目录恢复并核对哈希。直连断连后只续传剩余 510/512 块。见 [R2.6 连接指南](R2_6_CONNECTIONS.md)。
+- Windows 构建成功，完整 CTest **31/32**。唯一失败为既有原生 ComboBox 自动输入间歇问题。正式服务未切换，未执行原生手工验收。
+
+## 目录快照双栏弹性精修（2026-11-04）
+
+- 原两张表格使用垂直 Maximum、按行数计算的 sizeHint 以及下方伸展项。改为 Qt 原生 QTableWidget 和 QTableView 的 Expanding 高度，每栏列表是唯一垂直 stretch=1 项，空状态覆盖在视口内。快照详情与恢复控件用 Preferred 并按内容取高，预检摘要分行避免文件数量变化引起额外换行。QSplitter 初始约 30:70，保留拖动与原最小宽度。两表各自按像素垂直滚动，保留正常行高与路径伸展列。
+- 修改 SnapshotPage.cpp 和 snapshot_page_test.cpp，沿用已有查询、分页、模型、校验、确认、线程和恢复流程。布局测试使用临时工作区和回环协议夹具，只做只读预检。现有恢复回归仍使用隔离输出。
+- 执行 `cmake -S . -B build-windows-gui` 成功。Qt 6.8.3 与 MinGW 13.1。使用 Windows Qt 平台和 QT_SCALE_FACTOR=0.8、1、1.2 运行 `chunkharbor-snapshot-page-test.exe --layout`，实测 DPR 1.0、1.25、1.5，均通过 1280×820、加高至 920、1060×700 与最大化。检查首行、两个独立滚动条、分页、快照切换、固定区域稳定性及恢复控件几何。截图 build-windows-gui/snapshot-elastic-*.png。
+- 四组快照/文件为 1/2、20/100、100/1000、500/5000。按原每页 32 条快照遍历到最后一页，文件按协议分页完整读取，每个 GUI 文件页最多 100 条。最大组总耗时 3.34–3.47 秒，包含布局等待、回环传输和只读预检。10ms 定时器的最大事件间隔为 36、54、65ms。三种 DPR 下最大组加载态私有内存分别约 83.0、86.7、89.0 MiB，比同进程最小组多约 3.6、4.1、3.5 MiB。这是单次短时样本，未做长期泄漏或服务器压力测试。
+- 首轮断言发现 100 项时原预检提示由一行变成两行，修正明确分行后同宽固定区高度在四组数据下保持一致。现有文件预检和恢复断言保留。
+- `cmake --build build-windows-gui -j 2` 退出 0，日志 build-windows-gui/snapshot-elastic-build.log。`ctest --test-dir build-windows-gui --output-on-failure -j 2` 32/32 通过，122.89 秒，包含既有快照预检、回环 NTFS 恢复、当前文件夹下载和默认缩放原生 ComboBox。日志 build-windows-gui/snapshot-elastic-ctest.log。`git diff --check` 退出 0。
+- 本轮未执行 Linux 构建、真实 SSH 压测或跨物理屏幕拖动。下一项最小人工验收为在真实快照上拖动分隔条并浏览长路径和预检提示。
+
+## 目录快照双栏与导航顺序（2026-11-04）
+
+- 侧边栏顺序调整为总览、备份、文件、版本历史、目录快照、日志、设置。各项沿用原图标；启动页继续通过稳定 ID 查找。顶部设置按钮绑定构建时的实际栈索引，恢复残留及创建结果不确定时按快照 Widget 查找回跳页。
+- 快照页顶部区分当前文件夹下载与历史快照查询。横向 QSplitter 左侧约 35% 为三行紧凑快照列表，右侧为快照摘要、清单与恢复到本地。摘要显示完整 ID、逻辑根、创建时间和文件数量，清单完整后显示实际总大小。路径列伸展，字节数和安全检查保留在表格，选中文件的完整版本 ID、SHA-256 与本地目标可从详情查看。两个列表独立滚动，清单保留原分页。
+- 恢复区按已有父目录、新目录名、目标预览、预检结果组织。沿用 SnapshotPage 的查询状态和确认信号、预检线程及恢复对象所有权。按钮启用条件、服务器请求、SHA-256 与无覆盖发布仍由原实现负责。
+- 修改 MainWindow.cpp、SnapshotPage.cpp/.h、CMakeLists.txt、snapshot_page_test.cpp、gui_pages_test.cpp、combo_popup_test.cpp 及本文件。保留工作区原有修改。ComboBox 用例改为遍历重排后原先的三个页面，断言保持原样。
+- 配置使用 `cmake -S . -B build-windows-gui`，Windows Qt 6.8.3 与 MinGW 13.1。首次新增布局测试因 Qt 的 QPoint/QPointF 重载歧义编译失败，明确使用 QPoint 后通过。首轮全量 32/32，127.97 秒。原生截图发现内联字段挤压清单和旧进度条数字裁切，后续改为独立文件详情弹窗，并为快照进度条留出文本高度。
+- 增加完整首行的几何断言后，发现 1060×700 下底部结果区域仍会压缩清单，随后将进度和恢复结果移至左栏。最终 `cmake --build build-windows-gui -j 2` 通过。Windows 原生平台以 QT_SCALE_FACTOR=0.8、1、1.2 实测 DPR 1.0、1.25、1.5，三次 `chunkharbor-snapshot-page-test.exe --layout` 都通过 1280×820、1060×700 与最大化，截图存于 build-windows-gui/snapshot-final-*.png。
+- 最终 `ctest --test-dir build-windows-gui --output-on-failure -j 2` **32/32 通过**，122.03 秒。包含导航映射、默认缩放原生 ComboBox、快照分页与安全预检、回环协议夹具上的快照恢复和当前文件夹下载。测试实际写入隔离 NTFS 目录并核对文件内容，也覆盖摘要错误、断开、取消、目标竞争与残留报告。日志为 build-windows-gui/snapshot-ui-ctest-delivery.log。git diff --check 退出 0。
+- 仍需人工核对真实服务器或 SSH 隧道、原生父目录选择和物理显示器间拖动。Linux 构建本轮未执行。下一项最小验收是用已有真实快照核对详情及目标路径展示。
+
+## GUI 日志目录迁移（2026-11-04）
+
+- GUI 日志固定到构建时的项目根目录下 `logs/activity.json`，设置页面只读展示，忽略旧的自定义日志目录设置；显式传入的测试数据目录仍用于隔离测试。日志目录加入 Git 忽略规则。
+- 关闭 GUI 后将原 AppData 日志复制至项目目录，以 SHA-256 校验一致后删除旧文件。未更改其他本机数据。日志位置由 CMake 构建时的源码路径确定，移动项目目录后需要重新配置构建。
+- Windows Qt 6.8.3 / MinGW：`cmake --build build-windows-gui --target chunkharbor-gui chunkharbor-gui-state-test chunkharbor-gui-pages-test -j 2` 成功；`ctest --test-dir build-windows-gui -R '^(gui_state_test|gui_pages_test)$' --output-on-failure` 2/2 通过；`cmake --build cmake-build-windows-gui --target chunkharbor-gui -j 2` 成功。未执行 Linux 构建及真实 GUI 人工日志显示验证。
+
+## 服务器历史子页布局（2026-11-04）
+
+- 查询入口仍由版本历史页切换。子页把返回、路径和查询操作合并到同一工具栏，下方约 65:35 双栏。左侧使用共享选中色，展示序号、状态、本地提交时间、大小和 SHA-256 前缀。少量记录按内容高度收紧，完整分页可滚动到底。右侧复用共享详情面板，保留完整 ID 与摘要的提示和复制，将指定版本下载放到详情底部。
+- 核对 SQLite v3 历史表、查询映射和现有协议后，确认 `committed_at_s` 是可选 Unix 秒。新发布的触发器会写入时间，迁移补登记录的时间可能为空。有效值继续显示本地时间，缺失或超出显示范围的值显示「未知」。
+- 生产改动限于 VersionsPage.cpp 的服务器子页与切换绑定。保留现有页数据和原表格字段，列表仅展示精选列。请求、分页游标、取消、选择校验和历史下载仍走原路径，Qt 控件由原 QObject 父级持有。测试改动在 CMakeLists.txt、server_history_gui_test.cpp 和 gui_download_probe.cpp。
+- Windows Qt 6.8.3、MinGW 13.1 执行 `cmake -S . -B build-windows-gui` 和 `cmake --build build-windows-gui -j 2` 均退出 0。专项 `ctest --test-dir build-windows-gui -R '^server_history_gui_test$' --output-on-failure` 1/1 通过。使用 Windows 原生 Qt 平台与 QT_SCALE_FACTOR 0.8、1、1.2 运行同一可执行程序，实测 DPR 1.0、1.25、1.5 均通过。测试覆盖窗口尺寸、最大化、状态、真实时间与空值、复制、分页、32 行滚动、取消、断开、空响应与返回本地页。截图保存在 build-windows-gui/server-history-scale-*.png，使用隔离数据。
+- 完整 `ctest --test-dir build-windows-gui --output-on-failure -j 2` 32/32 通过，120.93 秒，包含指定版本下载、安全输出及默认 DPR 1.25 下的原生 ComboBox。日志为 build-windows-gui/server-history-ui-ctest.log。另用 QT_SCALE_FACTOR=1.2 单独运行 ComboBox，DPR 1.5 在备份页普通窗口的 Enter 焦点恢复断言失败。此测试及 ComboBox 实现未调整，结果单独记录在 build-windows-gui/server-history-combo-dpr15.log。git diff --check 退出 0。
+- 后续最小人工验收是在现有真实服务器历史中核对新旧提交时间及跨屏拖动。Linux 构建、真实 SSH 和物理显示器间 DPI 切换本轮未执行。
+
+## R3.1 大文件限制与资源审计（2026-11-04）
+
+- **仅完成审计与升级方案。** R2 标签与审计起点 HEAD 同为 `9f60788`，开始时无未提交业务代码或未忽略测试产物。文件上限、协议、SQLite schema 与业务实现均未变更。
+- [R3.1 审计](R3_1_LARGE_FILE_AUDIT.md) 列出 64 MiB 入口、512 MiB 在途配额、65,536 块与分页约束，以及 1/4/10 GiB 分阶段门槛。GB 启用前优先解决共享锁下的整文件 I/O、在途与发布空间预留、长请求结果协调。4 GiB 前需修复快照单文件进度的 32 位窄化。目录恢复仍需测量发布前保留的句柄。
+- Windows 11、Qt 6.8.3 / MinGW 13.1、Ninja。执行 `cmake -S . -B build-windows-gui` 和 `cmake --build build-windows-gui -j 2` 均退出 0。配置提示缺 Vulkan 头，部署提示缺 dxcompiler/dxil；本轮 GUI 回归通过。设置 `QT_QPA_PLATFORM=offscreen` 后执行 `ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure -j 2`，**31/31**，97.95 秒。原生 ComboBox 专项本轮未运行。
+- 本轮未执行 Linux 构建/CTest、真实 SSH、GB 样本、真实盘满、性能采样或硬件掉电。R2 的 Linux 57/57 和真实 SSH 记录属于原验收。未提交或推送。
+- 下一轮最小任务建议先隔离 `DeltaStorage::manifestDone` 的基线读取与共享 DB 写事务，在既有上限下验证慢规划期间独立请求进展，以及并发和重启时的计划一致性。
+
+
 ## R2 Git 基线
 
 - 阶段版本使用标签 `r2-backup-restore-baseline`，保存 R2 实现、测试和验收记录。迁移测试仅纳入 [v2 与 v3 合成夹具](../tests/fixtures/README.md)。本地构建产物、验收日志及临时备份留在 Git 之外。

@@ -1,4 +1,5 @@
 #include "QtTcpTransport.h"
+#include <QNetworkProxy>
 #include <QThread>
 #include <algorithm>
 #include <exception>
@@ -58,13 +59,18 @@ void QtTcpTransport::start(const QString &host, quint16 port, Hello offer, bool 
     requestMode_ = requestMode;
     awaiting_ = false;
     lastRequestId_ = 1;
+    socket_.setProxy(QNetworkProxy::NoProxy);
     socket_.setReadBufferSize(HandshakeLimit + 1);
     exchange_.emplace(std::move(offer));
     terminal_ = false;
     setHealthState(requestMode ? HealthState::Unchecked : HealthState::Checking);
     emit statusChanged(tr("正在连接…"));
+    if (host.isEmpty() || !port) {
+        fail(tr("请配置有效的服务器连接地址和端口。"));
+        return;
+    }
     timer_.start(5000);
-    socket_.connectToHost(host, port);
+    socket_.connectToHost(host, port, QIODevice::ReadWrite, QAbstractSocket::IPv4Protocol);
 }
 void QtTcpTransport::setHealthState(HealthState state) {
     if (state == healthState_) return;

@@ -11,6 +11,7 @@
 #include "pages/SettingsPage.h"
 #include "pages/VersionsPage.h"
 #include <QApplication>
+#include <QStackedWidget>
 #include <QComboBox>
 #include <QDir>
 #include <QEventLoop>
@@ -44,6 +45,32 @@ int main(int argc, char **argv) {
         QCoreApplication::setApplicationName("pages");
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
+        QSettings().setValue("connection/port", 19087);
+        {
+            SettingsPage settings;
+            auto *mode = settings.findChild<QComboBox *>("connectionMode");
+            check(mode && mode->currentData() == "ssh" && settings.port->value() == 19087,
+                  "legacy SSH settings preserved");
+            mode->setCurrentIndex(mode->findData("tcp"));
+            check(settings.serverHost().isEmpty() && settings.port->value() == 8787,
+                  "direct mode requires an address");
+            settings.host->setText("999.1.2.3");
+            check(settings.serverHost().isEmpty(), "invalid IPv4 rejected");
+            settings.host->setText("VM.Example");
+            settings.port->setValue(9878);
+            check(settings.backupConfig().direct && settings.backupConfig().host == "vm.example",
+                  "backup receives the selected direct endpoint");
+            mode->setCurrentIndex(mode->findData("ssh"));
+            check(settings.port->value() == 19087 && settings.serverHost() == "127.0.0.1",
+                  "SSH profile independent");
+            mode->setCurrentIndex(mode->findData("tcp"));
+        }
+        {
+            SettingsPage settings;
+            check(settings.backupConfig().direct && settings.serverHost() == "vm.example" &&
+                  settings.port->value() == 9878, "direct profile restored after reopening settings");
+        }
+        QSettings().remove("connection");
         WorkspaceStore store(temp.filePath("data"));
         TransferController controller(&store);
         SettingsPage settings;
@@ -271,7 +298,20 @@ int main(int argc, char **argv) {
         maximizeLoop.exec();
         check(recent->isVisible() && detect->isVisible(), "dashboard controls stay available when maximized");
         window.findChild<QPushButton *>("topbarSettings")->click();
-        check(window.findChild<QListWidget *>("navigation")->currentRow() == 5, "settings action retains navigation");
+        check(window.findChild<QListWidget *>("navigation")->currentRow() == 6, "settings action retains navigation");
+        auto *navigation = window.findChild<QListWidget *>("navigation");
+        auto *pageStack = window.findChild<QStackedWidget *>("pageStack");
+        const QStringList labels{"总览", "备份", "文件", "版本历史", "目录快照", "日志", "设置"};
+        const QStringList markers{"dashboardMetric0", "backupStart", "filesTable", "versionsSplitter",
+                                  "snapshotRoot", "logSearch", "serverPort"};
+        check(navigation->count() == labels.size(), "navigation preserves every page");
+        for (int row = 0; row < labels.size(); ++row) {
+            navigation->setCurrentRow(row);
+            check(navigation->item(row)->text() == labels[row] &&
+                  pageStack->currentWidget()->findChild<QWidget *>(markers[row]),
+                  "navigation order matches its actual page");
+        }
+
         std::cout << "real empty states, settings persistence, history, logs and connection "
                      "binding passed\n";
     } catch (const std::exception &e) {

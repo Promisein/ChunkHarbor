@@ -108,9 +108,10 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
     nav->setSpacing(2);
     nav->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     const QStringList names = {tr("总览"),     tr("备份"), tr("文件"),
-                               tr("版本历史"), tr("日志"), tr("设置"), tr("目录快照")};
+                               tr("版本历史"), tr("目录快照"), tr("日志"), tr("设置")};
+    const int iconOrder[] = {0, 1, 2, 3, 6, 4, 5};
     for (int i = 0; i < names.size(); ++i) {
-        auto *item = new QListWidgetItem(icon(i), names[i], nav);
+        auto *item = new QListWidgetItem(icon(iconOrder[i]), names[i], nav);
         item->setSizeHint(QSize(144, 46));
     }
     side->addWidget(nav, 1);
@@ -156,33 +157,30 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
     auto *stack = new QStackedWidget(root);
     stack->setObjectName("pageStack");
     settings_ = new SettingsPage;
-    fileList_->setEndpoint(settings_->host->text(), static_cast<quint16>(settings_->port->value()));
+    fileList_->setEndpoint(settings_->serverHost(), static_cast<quint16>(settings_->port->value()));
     auto updateAddress = [this, address] {
-        auto host = settings_->host->text();
+        auto host = settings_->host->text().trimmed();
+        if (host.isEmpty()) host = tr("未配置地址");
         if (host.contains(':') && !host.startsWith('[')) host = "[" + host + "]";
         const auto endpoint = QString("%1:%2").arg(host).arg(settings_->port->value());
         address->setMaximumWidth(qMin(236, address->fontMetrics().horizontalAdvance(endpoint) + 16));
         address->setValue(endpoint);
     };
     updateAddress();
-    auto updatePreferences = [this] {
-        auto dir = settings_->logDirectory();
-        if (!dir.isEmpty() && dir != store_->logDirectory())
-            store_->setLogDirectory(dir);
-    };
-    connect(settings_, &SettingsPage::preferencesChanged, this, updatePreferences);
-    updatePreferences();
+    settings_->findChild<QLineEdit *>("logDirectory")->setText(store_->logDirectory());
     auto *filesPage = new FilesPage(fileList_, nullptr, download_);
     auto *versionsPage = new VersionsPage(store_, nullptr, download_);
-    versionsPage->setServerEndpoint(settings_->host->text(), static_cast<quint16>(settings_->port->value()));
+    versionsPage->setServerEndpoint(settings_->serverHost(), static_cast<quint16>(settings_->port->value()));
     auto *snapshotPage = snapshots_ = new SnapshotPage;
-    snapshotPage->setEndpoint(settings_->host->text(), static_cast<quint16>(settings_->port->value()));
+    snapshotPage->setEndpoint(settings_->serverHost(), static_cast<quint16>(settings_->port->value()));
     const QList<QWidget *> pages = {new DashboardPage(controller_, store_, transport_),
                                     new BackupPage(controller_, settings_),
                                     filesPage,
                                     versionsPage,
+                                    snapshotPage,
                                     new LogsPage(store_),
-                                    settings_, snapshotPage};
+                                    settings_};
+    int settingsIndex = -1;
     for (auto *page : pages) {
         if (page == filesPage || page == versionsPage || page == snapshotPage) {
             stack->addWidget(page);
@@ -192,7 +190,8 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
         scroll->setWidgetResizable(true);
         scroll->setFrameShape(QFrame::NoFrame);
         scroll->setWidget(page);
-        stack->addWidget(scroll);
+        const int index = stack->addWidget(scroll);
+        if (page == settings_) settingsIndex = index;
     }
     right->addWidget(stack, 1);
     // Reparent only the presentation bar; the window-owned download survives navigation.
@@ -203,13 +202,13 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
             title->setText(names[row]);
         }
     });
-    const QStringList pageIds = {"dashboard", "backup", "files", "versions", "logs", "settings", "snapshots"};
+    const QStringList pageIds = {"dashboard", "backup", "files", "versions", "snapshots", "logs", "settings"};
     nav->setCurrentRow(qMax(0, pageIds.indexOf(settings_->startupPage())));
-    connect(preferences, &QPushButton::clicked, this, [nav] { nav->setCurrentRow(5); });
+    connect(preferences, &QPushButton::clicked, this, [nav, settingsIndex] { nav->setCurrentRow(settingsIndex); });
     using Health = QtTcpTransport::HealthState;
     auto check = [this] {
         if (transport_->healthState() == Health::Checking || controller_->busy()) return;
-        transport_->connectToServer(settings_->host->text(),
+        transport_->connectToServer(settings_->serverHost(),
                                     static_cast<quint16>(settings_->port->value()));
     };
     connect(refresh, &QPushButton::clicked, this, check);
@@ -217,12 +216,11 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
     auto endpointChanged = [this, updateAddress, versionsPage, snapshotPage] {
         updateAddress();
         transport_->disconnectFromServer();
-        fileList_->setEndpoint(settings_->host->text(), static_cast<quint16>(settings_->port->value()));
-        versionsPage->setServerEndpoint(settings_->host->text(), static_cast<quint16>(settings_->port->value()));
-        snapshotPage->setEndpoint(settings_->host->text(), static_cast<quint16>(settings_->port->value()));
+        fileList_->setEndpoint(settings_->serverHost(), static_cast<quint16>(settings_->port->value()));
+        versionsPage->setServerEndpoint(settings_->serverHost(), static_cast<quint16>(settings_->port->value()));
+        snapshotPage->setEndpoint(settings_->serverHost(), static_cast<quint16>(settings_->port->value()));
     };
-    connect(settings_->port, qOverload<int>(&QSpinBox::valueChanged), this, endpointChanged);
-    connect(settings_->host, &QLineEdit::textChanged, this, endpointChanged);
+    connect(settings_, &SettingsPage::connectionChanged, this, endpointChanged);
     connect(transport_, &QtTcpTransport::statusChanged, this, [this, badge](const QString &text) {
         store_->appendLog("信息", text);
         settings_->status->setText(text);
@@ -255,10 +253,14 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
         badge->style()->polish(badge);
     };
     connect(transport_, &QtTcpTransport::healthChanged, this, updateHealth);
-    connect(controller_, &TransferController::busyChanged, this, [this, updateHealth](bool busy) {
-        settings_->setEnabled(!busy);
-        updateHealth();
-    });
+    const auto updateConnectionLock = [this, snapshotPage] {
+        settings_->setEnabled(!controller_->busy() && !download_->busy() &&
+            !snapshotPage->restoring() && !snapshotPage->settlingCapture());
+    };
+    connect(controller_, &TransferController::busyChanged, this, updateHealth);
+    connect(controller_, &TransferController::busyChanged, settings_, updateConnectionLock);
+    connect(download_, &DownloadController::changed, settings_, updateConnectionLock);
+    connect(snapshotPage, &SnapshotPage::connectionLockChanged, settings_, updateConnectionLock);
     updateHealth();
     connect(controller_, &TransferController::finished, this, [this](const QString &, bool) {
         if (closing_)
@@ -267,7 +269,7 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
     connect(download_, &DownloadController::finished, this, [this](bool) {
         if (closing_) QTimer::singleShot(0, this, [this] { if (closing_) close(); });
     });
-    connect(snapshots_, &SnapshotPage::restoreFinished, this, [this, nav](const QString &residue) {
+    connect(snapshots_, &SnapshotPage::restoreFinished, this, [this, nav, stack](const QString &residue) {
         if (!residue.isEmpty()) {
             const auto message = tr("快照恢复清理失败，暂存目录仍在 %1").arg(residue);
             store_->appendLog("错误", message);
@@ -275,18 +277,18 @@ MainWindow::MainWindow(QWidget *parent, QString dataDirectory)
             if (closing_) {
                 closing_ = false;
                 setWindowTitle(tr("ChunkHarbor"));
-                nav->setCurrentRow(6);
+                nav->setCurrentRow(stack->indexOf(snapshots_));
             }
             return;
         }
         if (closing_) QTimer::singleShot(0, this, [this] { if (closing_) close(); });
     });
-    connect(snapshots_, &SnapshotPage::captureSettled, this, [this, nav](bool uncertain) {
+    connect(snapshots_, &SnapshotPage::captureSettled, this, [this, nav, stack](bool uncertain) {
         if (!closing_) return;
         if (uncertain) {
             closing_ = false;
             setWindowTitle(tr("ChunkHarbor"));
-            nav->setCurrentRow(6);
+            nav->setCurrentRow(stack->indexOf(snapshots_));
         } else {
             QTimer::singleShot(0, this, [this] { if (closing_) close(); });
         }
@@ -322,6 +324,6 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     event->accept();
 }
 void MainWindow::connectToLocalServer(quint16 port) {
-    settings_->port->setValue(port);
+    settings_->setLocalPort(port);
     transport_->connectToServer("127.0.0.1", port);
 }

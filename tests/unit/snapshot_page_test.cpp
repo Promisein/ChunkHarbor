@@ -5,8 +5,14 @@
 #include "chunkharbor/protocol/Download.h"
 #include <QAbstractButton>
 #include <QApplication>
+#include <QClipboard>
+#include <QEventLoop>
+#include <QScrollBar>
+#include <QSplitter>
+#include <QTimer>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDialog>
 #include <QElapsedTimer>
 #include <QEvent>
 #include <QFile>
@@ -30,6 +36,7 @@
 #include <stdexcept>
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <psapi.h>
 #endif
 
 using namespace chunkharbor::protocol;
@@ -86,16 +93,21 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName("snapshot-preview");
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
+    const auto directHost = qEnvironmentVariable("CHUNKHARBOR_TEST_TCP_HOST");
+    if (!directHost.isEmpty()) {
+        QSettings().setValue("connection/mode", "tcp");
+        QSettings().setValue("connection/tcpHost", directHost);
+    }
     QSettings().setValue("storage/logDirectory", temp.filePath("logs"));
     try {
         QTcpServer listener;
         require(listener.listen(QHostAddress::LocalHost), "listen failed");
         auto window = std::make_unique<MainWindow>(nullptr, temp.filePath("workspace"));
-        const bool remote = app.arguments().size() > 1;
+        const bool remote = app.arguments().value(1).toUShort() != 0;
         auto *serverPort = window->findChild<QSpinBox *>("serverPort");
         serverPort->setValue(
             remote ? app.arguments()[1].toUShort() : listener.serverPort());
-        window->findChild<QListWidget *>("navigation")->setCurrentRow(6);
+        window->findChild<QListWidget *>("navigation")->setCurrentRow(4);
         auto *root = window->findChild<QLineEdit *>("snapshotRoot");
         auto *page = root->parentWidget();
         auto *target = window->findChild<QLineEdit *>("snapshotTarget");
@@ -103,8 +115,8 @@ int main(int argc, char **argv) {
         auto *cancel = window->findChild<QPushButton *>("snapshotCancel");
         auto *capture = window->findChild<QPushButton *>("snapshotDownloadFolder");
         require(capture, "snapshot page must expose current folder download");
-#ifdef Q_OS_WIN
         auto *restore = window->findChild<QPushButton *>("snapshotRestore");
+#ifdef Q_OS_WIN
         require(restore && !restore->isEnabled(), "restore must be unavailable before a verified manifest");
 #endif
         auto *status = window->findChild<QLabel *>("snapshotStatus");
@@ -283,6 +295,166 @@ int main(int argc, char **argv) {
                  encodeSnapshotEntriesPage({info.id, std::move(items), std::move(next)}));
         };
 
+        if (app.arguments().value(1) == "--layout") {
+            auto *entries = window->findChild<QTableView *>("snapshotEntries");
+            auto *details = window->findChild<QWidget *>("snapshotDetails");
+            auto *recovery = window->findChild<QWidget *>("snapshotRecoveryPanel");
+            auto *older = window->findChild<QPushButton *>("snapshotOlder");
+            auto *nextFiles = window->findChild<QPushButton *>("snapshotEntriesNext");
+            auto *previousFiles = window->findChild<QPushButton *>("snapshotEntriesPrevious");
+            auto full = [&](const char *label) {
+                return window->findChild<QLabel *>(label)->property("fullText").toString();
+            };
+            auto settle = [] {
+                QEventLoop loop;
+                QTimer::singleShot(80, &loop, &QEventLoop::quit);
+                loop.exec();
+            };
+            auto fits = [&](QWidget *widget) {
+                const auto rect = QRect(widget->mapTo(window.get(), QPoint{}), widget->size());
+                const auto *bar = window->findChild<QWidget *>("filesTransferBar");
+                return widget->isVisible() && window->rect().contains(rect) &&
+                    rect.bottom() < bar->mapTo(window.get(), QPoint{}).y();
+            };
+            auto checkGeometry = [&] {
+                require(fits(details) && fits(list) && fits(entries) && fits(recovery) && fits(restore) &&
+                        !entries->horizontalScrollBar()->isVisible() && !list->horizontalScrollBar()->isVisible() &&
+                        list->viewport()->height() >= list->rowHeight(0) &&
+                        entries->viewport()->height() >= entries->rowHeight(0),
+                        "both lists and fixed areas fit without horizontal overflow");
+            };
+            auto showManifest = [&](int row, const SnapshotInfo &info) {
+                auto *socket = open(row, info);
+                std::string after;
+                for (std::uint32_t offset = 0; offset < info.fileCount; offset += MaxSnapshotEntriesPerPage) {
+                    const auto end = std::min(info.fileCount, offset + MaxSnapshotEntriesPerPage);
+                    std::vector<ListedFile> batch;
+                    for (auto i = offset; i < end; ++i) {
+                        const auto suffix = i == 0 ? std::string(130, 'p') : std::string("report");
+                        batch.push_back(file(std::to_string(10000 + i) + "-" + suffix + ".txt"));
+                    }
+                    const auto next = end < info.fileCount ? batch.back().path : "";
+                    pageReply(socket, info, after, std::move(batch), next);
+                    after = next;
+                }
+                waitFor(complete);
+                require(full("snapshotSelectedId") == QString::fromStdString(info.id) &&
+                        model->rowCount() == static_cast<int>(std::min(info.fileCount, 100U)) &&
+                        cell(0, 0).startsWith("10000-") && !restore->isEnabled(),
+                        "selected manifest follows the server and stays in read-only preview");
+            };
+            auto privateMiB = []() -> double {
+#ifdef Q_OS_WIN
+                PROCESS_MEMORY_COUNTERS_EX counters{};
+                if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&counters),
+                                         sizeof(counters)))
+                    return counters.PrivateUsage / (1024.0 * 1024.0);
+#endif
+                return -1;
+            };
+            target->clear();
+            window->show();
+            const std::pair<int, unsigned> cases[]{{1, 2}, {20, 100}, {100, 1000}, {500, 5000}};
+            QSize fixedHeights;
+            for (const auto &[historyCount, fileCount] : cases) {
+                window->showNormal();
+                window->resize(1280, 820);
+                settle();
+                std::vector<SnapshotInfo> history;
+                for (int sequence = historyCount; sequence > 0; --sequence) {
+                    history.push_back({QString::number(sequence, 16).rightJustified(32, '0').toStdString(),
+                        "fixture", static_cast<std::uint64_t>(sequence), 1793707200ULL,
+                        sequence == historyCount ? fileCount : 2U});
+                }
+                auto listPage = [&](int offset, bool firstPage) {
+                    auto *socket = hello();
+                    const auto frame = receive(socket);
+                    const auto request = decodeListSnapshots(frame.payload);
+                    const auto cursor = firstPage ? std::optional<std::uint64_t>{} :
+                        std::optional<std::uint64_t>{history[offset - 1].sequence};
+                    require(frame.type == ListSnapshotsType && request.before == cursor && request.limit == 32,
+                            "history stress fixture uses real cursors and the production page limit");
+                    const auto end = std::min(offset + static_cast<int>(request.limit), historyCount);
+                    send(socket, SnapshotsPageType, frame.requestId,
+                         encodeSnapshotsPage({"fixture", {history.begin() + offset, history.begin() + end},
+                             end < historyCount ? std::optional<std::uint64_t>{history[end - 1].sequence} : std::nullopt}));
+                    waitFor([&] { return !cancel->isEnabled() && list->rowCount() == end - offset; });
+                    require(list->item(0, 0)->text() == QString::fromStdString(history[offset].id) &&
+                            list->item(list->rowCount() - 1, 0)->text() == QString::fromStdString(history[end - 1].id),
+                            "history page displays its first and last record");
+                    return end;
+                };
+                QElapsedTimer elapsed, pulseClock;
+                elapsed.start();
+                pulseClock.start();
+                qint64 worstGap = 0;
+                QTimer pulse;
+                QObject::connect(&pulse, &QTimer::timeout, &pulse,
+                                 [&] { worstGap = qMax(worstGap, pulseClock.restart()); });
+                pulse.start(10);
+                query->click();
+                int seen = listPage(0, true);
+                if (historyCount > 1) showManifest(1, history[1]);
+                showManifest(0, history[0]);
+                settle();
+                checkGeometry();
+                if (!fixedHeights.isValid()) fixedHeights = {details->height(), recovery->height()};
+                const double loadedMiB = privateMiB();
+                require(QSize(details->height(), recovery->height()) == fixedHeights,
+                        "data volume leaves the fixed section heights stable");
+                const int listHeight = list->height(), entriesHeight = entries->height();
+                const int normalWindowHeight = window->height();
+                window->resize(1280, 920);
+                settle();
+                checkGeometry();
+                const int heightGrowth = window->height() - normalWindowHeight;
+                require(heightGrowth >= 40 && list->height() >= listHeight + heightGrowth - 2 &&
+                        entries->height() >= entriesHeight + heightGrowth - 2 &&
+                        QSize(details->height(), recovery->height()) == fixedHeights,
+                        "additional height goes to both lists");
+                window->resize(1060, 700);
+                settle();
+                checkGeometry();
+                window->showMaximized();
+                settle();
+                checkGeometry();
+                window->showNormal();
+                window->resize(1280, 820);
+                settle();
+                if (historyCount > 1) {
+                    auto *leftScroll = list->verticalScrollBar();
+                    auto *rightScroll = entries->verticalScrollBar();
+                    require(leftScroll->maximum() > 0 && rightScroll->maximum() > 0, "both populated tables scroll");
+                    rightScroll->setValue(0);
+                    leftScroll->setValue(leftScroll->maximum());
+                    require(rightScroll->value() == 0, "history scroll is independent");
+                    leftScroll->setValue(0);
+                    rightScroll->setValue(rightScroll->maximum());
+                    require(leftScroll->value() == 0, "manifest scroll is independent");
+                    rightScroll->setValue(0);
+                }
+                if (fileCount > 100) {
+                    nextFiles->click();
+                    require(model->rowCount() == 100 && cell(0, 0).startsWith("10100-"), "manifest pagination");
+                    previousFiles->click();
+                }
+                if (historyCount == 500 && app.arguments().size() > 2)
+                    require(window->grab().save(app.arguments()[2]), "snapshot layout screenshot");
+                while (seen < historyCount) {
+                    require(older->isEnabled(), "more history remains accessible");
+                    older->click();
+                    seen = listPage(seen, false);
+                }
+                require(!older->isEnabled(), "last history page has no next cursor");
+                pulse.stop();
+                std::cerr << "snapshot layout DPR=" << window->devicePixelRatioF()
+                          << " history=" << seen << " files=" << fileCount << " elapsedMs=" << elapsed.elapsed()
+                          << " maxPulseGapMs=" << worstGap << " loadedPrivateMiB=" << loadedMiB
+                          << " afterPagingPrivateMiB=" << privateMiB() << '\n';
+            }
+            return 0;
+        }
+
         auto *stale = open(1, large);
         const auto stalePull = receive(stale);
         require(stalePull.type == ListSnapshotEntriesType, "missing first pull");
@@ -375,6 +547,25 @@ int main(int argc, char **argv) {
 #endif
         waitFor(complete);
         require(model->rowCount() == 1 && cell(0, 0) == "only", "single file snapshot");
+        auto *entries = window->findChild<QTableView *>("snapshotEntries");
+        auto labelValue = [&](const char *label) {
+            return window->findChild<QLabel *>(label)->property("fullText").toString();
+        };
+        require(labelValue("snapshotSelectedId") == QString::fromStdString(single.id) &&
+                labelValue("snapshotSelectedRoot") == "fixture", "summary follows selected snapshot");
+        entries->selectRow(0);
+        require(labelValue("snapshotEntryVersionId") == cell(0, 1) &&
+                labelValue("snapshotEntrySha") == cell(0, 3) &&
+                labelValue("snapshotEntryTarget") == cell(0, 4), "file details match actual manifest");
+        window->findChild<QPushButton *>("snapshotSelectedIdCopy")->click();
+        require(QApplication::clipboard()->text() == QString::fromStdString(single.id), "full snapshot ID copy");
+        window->findChild<QPushButton *>("snapshotInspectFile")->click();
+        auto *entryDetails = window->findChild<QDialog *>("snapshotFileDetails");
+        require(entryDetails->isVisible(), "selected manifest entry opens details");
+        window->findChild<QPushButton *>("snapshotEntryShaCopy")->click();
+        require(QApplication::clipboard()->text() == cell(0, 3), "full manifest hash copy");
+        entryDetails->reject();
+
 #ifdef Q_OS_WIN
         target->setText(junction);
         name->setText("blocked-root");

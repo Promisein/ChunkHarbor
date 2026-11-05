@@ -38,6 +38,9 @@ int main(int argc, char **argv) {
         {
             WorkspaceStore store(temp.path());
             check(store.records().isEmpty(), "no sample history");
+            const auto expectedLogDirectory = store.logDirectory();
+            store.setLogDirectory(temp.filePath("outside"));
+            check(store.logDirectory() == expectedLogDirectory, "reject alternate log directory");
             store.addCommit(a);
             store.addCommit(a);
             check(store.records().size() == 1, "idempotent commit history");

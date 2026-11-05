@@ -1,6 +1,8 @@
 # M4 使用与人工复现
 
-当前支持 Linux CLI / Windows Qt CLI 单向固定块增量备份、只读预览、目录批任务和恢复；GUI仍仅为连接原型。服务端只监听loopback，经SSH开发使用。普通TCP不具备认证/TLS。
+本文保留 M4 的 CLI 单向固定块增量备份、只读预览、目录批任务和恢复流程。
+
+Ubuntu 服务端的默认监听地址是 `127.0.0.1`。如需 Windows GUI 在可信虚拟机网络直连，可显式配置 `--bind`，步骤见 [R2.6 连接指南](R2_6_CONNECTIONS.md)。本文的 Linux CLI 示例继续使用回环或本地 SSH 转发。
 
 ## 1. Ubuntu：创建全新测试根并启动
 

@@ -26,15 +26,15 @@ unsigned number(std::string_view text, unsigned max) {
 int main(int argc, char *argv[]) {
     try {
         bool echo = false, handshake = false, upload = false, explicitMax = false;
-        std::string root;
+        std::string root, bindAddress = "127.0.0.1";
         unsigned port = 8787, idleMs = 30000, maxConnections = 512;
         for (int i = 1; i < argc; ++i) {
             const std::string_view arg(argv[i]);
             if (arg == "--help") {
                 std::cout << "Usage: chunkharbor-server (--echo | --handshake | --upload --root "
-                             "PRIVATE_ROOT) [--port 8787] [--idle-timeout-ms 30000] "
+                             "PRIVATE_ROOT) [--bind 127.0.0.1] [--port 8787] [--idle-timeout-ms 30000] "
                              "[--max-connections 512]\n"
-                          << "Loopback only; upload requires an existing private absolute root. No "
+                          << "Loopback by default; use direct TCP only on a trusted network. No "
                              "authentication.\n";
                 return 0;
             }
@@ -55,6 +55,8 @@ int main(int argc, char *argv[]) {
             const std::string_view value(argv[++i]);
             if (arg == "--port")
                 port = number(value, 65535);
+            else if (arg == "--bind")
+                bindAddress = value;
             else if (arg == "--idle-timeout-ms")
                 idleMs = number(value, 3600000);
             else if (arg == "--max-connections") {
@@ -86,13 +88,13 @@ int main(int argc, char *argv[]) {
         std::unique_ptr<chunkharbor::UploadStorage> storage;
         std::unique_ptr<chunkharbor::DeltaStorage> delta;
         std::unique_ptr<chunkharbor::DiskExecutor> executor;
+        chunkharbor::TcpServer server(loop, port, std::chrono::milliseconds(idleMs),
+                                      maxConnections, bindAddress);
         if (upload) {
             storage = std::make_unique<chunkharbor::UploadStorage>(root);
             delta = std::make_unique<chunkharbor::DeltaStorage>(*storage);
             executor = std::make_unique<chunkharbor::DiskExecutor>(loop, 2, 64);
         }
-        chunkharbor::TcpServer server(loop, port, std::chrono::milliseconds(idleMs),
-                                      maxConnections);
         if (echo)
             server.setMessageCallback(echoFrames);
         else if (upload)
@@ -118,7 +120,7 @@ int main(int argc, char *argv[]) {
                 loop.quit();
         });
         signals.enableReading();
-        std::cout << "LISTENING 127.0.0.1:" << server.port() << std::endl;
+        std::cout << "LISTENING " << bindAddress << ':' << server.port() << std::endl;
         loop.run();
         server.stop();
         if (executor)

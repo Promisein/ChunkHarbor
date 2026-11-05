@@ -30,6 +30,11 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName("download-probe");
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
+    const auto directHost = qEnvironmentVariable("CHUNKHARBOR_TEST_TCP_HOST");
+    if (!directHost.isEmpty()) {
+        QSettings().setValue("connection/mode", "tcp");
+        QSettings().setValue("connection/tcpHost", directHost);
+    }
     QSettings().setValue("storage/logDirectory", temp.filePath("logs"));
     auto window = std::make_unique<MainWindow>(nullptr, temp.filePath("workspace"));
     const auto path = args[2];
@@ -74,7 +79,7 @@ int main(int argc, char **argv) {
         if (historical) {
             auto *rows = window->findChild<QTableWidget *>("serverHistoryRows");
             for (int row = 0; row < rows->rowCount(); ++row)
-                if (rows->item(row, 1)->text() == args[3]) rows->setCurrentCell(row, 1);
+                if (rows->item(row, 1)->text() == args[3]) rows->setCurrentCell(row, 0);
             button = window->findChild<QPushButton *>("serverHistoryRestore");
         } else {
             int selected = -1;

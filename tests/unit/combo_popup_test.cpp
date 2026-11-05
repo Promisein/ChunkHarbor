@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
             if (maximized) window.showMaximized(); else { window.showNormal(); window.resize(1280, 820); }
             window.activateWindow();
             QTest::qWait(200);
-            for (int page : {1, 4, 5}) {
+            for (int page : {1, 5, 6}) {
                 nav->setCurrentRow(page);
                 QTest::qWait(50);
                 auto *pageWidget = window.findChild<QStackedWidget *>("pageStack")->currentWidget();

@@ -10,7 +10,7 @@
 
 namespace chunkharbor {
 TcpServer::TcpServer(EventLoop& loop, std::uint16_t port, std::chrono::milliseconds idleTimeout,
-                     std::size_t maxConnections)
+                     std::size_t maxConnections, const std::string &bindAddress)
     : loop_(loop), listener_(::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)),
       timer_(::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)),
       acceptChannel_(loop, listener_.get()), timerChannel_(loop, timer_.get()),
@@ -20,7 +20,8 @@ TcpServer::TcpServer(EventLoop& loop, std::uint16_t port, std::chrono::milliseco
     if (idleTimeout.count() <= 0 || maxConnections == 0) throw std::invalid_argument("invalid server limits");
     int one = 1; ::setsockopt(listener_.get(), SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(port);
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::inet_pton(AF_INET, bindAddress.c_str(), &address.sin_addr) != 1)
+        throw std::invalid_argument("invalid IPv4 bind address: " + bindAddress);
     if (::bind(listener_.get(), reinterpret_cast<sockaddr*>(&address), sizeof(address)) ||
         ::listen(listener_.get(), 128)) throw systemError(errno, "bind/listen");
     socklen_t size = sizeof(address);
