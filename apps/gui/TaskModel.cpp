@@ -75,7 +75,8 @@ QVariant TaskModel::data(const QModelIndex &i, int role) const {
         return {};
     const auto &f = records_[i.row()];
     if (role == Qt::ToolTipRole)
-        return f.localPath + "\n执行策略：" + gui::strategyName(f.strategy) + "\n" + f.note;
+        return f.localPath + "\n远端：" + f.logicalPath + "\n预计上传：" + gui::formatBytes(f.missingBytes) +
+            "\n执行策略：" + (f.change == "已排除" ? QString("不参与") : gui::strategyName(f.strategy)) + "\n" + f.note;
     if (role == Qt::ForegroundRole && (i.column() == 0 || i.column() == 3)) {
         return QColor(!f.modeAllowed || f.status == "失败" || f.change == "错误" ? "#c45656"
                       : f.change == "新增"                     ? "#278258"
@@ -92,7 +93,7 @@ QVariant TaskModel::headerData(int i, Qt::Orientation o, int role) const {
         return {};
     if (o == Qt::Vertical)
         return i + 1;
-    return QStringList{"状态", "文件名", "大小", "变更类型", "执行策略", "说明"}.value(i);
+    return QStringList{"状态", "远端逻辑路径", "大小", "筛选/变更", "执行策略", "说明"}.value(i);
 }
 void TaskModel::clear() {
     beginResetModel();

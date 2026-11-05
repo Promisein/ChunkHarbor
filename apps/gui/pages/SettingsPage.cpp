@@ -96,12 +96,12 @@ SettingsPage::SettingsPage(QWidget *parent)
     resume_->setToolTip(tr("此项仅控制手动首次/增量模式。自动备份和显式续传始终核验匹配会话；关闭此项不会删除检查点。"));
     resume_->setChecked(p.value("backup/resume", true).toBool());
     exclusions_ = new QLineEdit(p.value("backup/exclusions", ".git;build").toString(), backup);
-    exclusions_->setToolTip(tr("目录名或相对路径，用分号分隔。"));
+    exclusions_->setToolTip(tr("所有备份范围均生效，用分号分隔。旧的纯名称（.git;build）仅按大小写敏感的精确目录名排除；含 / 的相对路径按映射根匹配；*.log 匹配文件名。新增规则在 Windows 忽略大小写。与任务排除规则取并集，排除优先。"));
     b->addRow(tr("默认分块大小"), chunk_);
     b->addRow(tr("并行上传数"), new QLabel(tr("1（顺序上传，当前版本固定）"), backup));
     b->addRow(tr("校验方式"), new QLabel("SHA-256", backup));
     b->addRow(tr("断点续传"), resume_);
-    b->addRow(tr("排除规则"), exclusions_);
+    b->addRow(tr("全局排除规则"), exclusions_);
     backup->body()->addLayout(b);
     layout_->addWidget(backup);
     auto *appearance = new InfoCard(tr("外观与本机存储"), this);

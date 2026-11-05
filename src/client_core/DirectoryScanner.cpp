@@ -2,9 +2,11 @@
 #include <stdexcept>
 namespace chunkharbor::client {
 DirectoryScanner::DirectoryScanner(std::filesystem::path root, std::set<std::string> exclusions,
-                                   std::filesystem::path state)
+                                   std::filesystem::path state,
+                                   std::function<std::string(const std::filesystem::path &, bool)> filter)
     : root_(std::filesystem::absolute(root).lexically_normal()), exclusions_(std::move(exclusions)),
-      state_(state.empty() ? state : std::filesystem::absolute(state).lexically_normal()) {
+      state_(state.empty() ? state : std::filesystem::absolute(state).lexically_normal()),
+      filter_(std::move(filter)) {
     if (std::filesystem::is_symlink(std::filesystem::symlink_status(root_)) ||
         !std::filesystem::is_directory(root_))
         throw std::runtime_error("source root must be a directory, not link");
@@ -25,16 +27,17 @@ std::optional<ScanEntry> DirectoryScanner::next() {
             if (std::filesystem::is_directory(status))
                 it_.disable_recursion_pending();
             ++it_;
-            return ScanEntry{local, relative, false, "source symbolic link/reparse rejected"};
+            return ScanEntry{local, relative, false, "source symbolic link/reparse rejected", {}};
         }
-        bool excluded = local.lexically_normal() == state_ ||
+        auto reason = filter_ ? filter_(local, std::filesystem::is_directory(status)) : std::string{};
+        bool excluded = !reason.empty() || local.lexically_normal() == state_ ||
                         (std::filesystem::is_directory(status) &&
                          exclusions_.count(local.filename().u8string()) != 0);
         if (excluded) {
             if (std::filesystem::is_directory(status))
                 it_.disable_recursion_pending();
             ++it_;
-            return ScanEntry{local, relative, true, {}};
+            return ScanEntry{local, relative, true, {}, reason.empty() ? "directory/state exclusion" : reason};
         }
         if (std::filesystem::is_directory(status)) {
             ++it_;
@@ -47,7 +50,7 @@ std::optional<ScanEntry> DirectoryScanner::next() {
         if (entry.file_size() > 64ULL * 1024 * 1024)
             throw std::runtime_error("source exceeds 64 MiB: " + relative);
         ++it_;
-        return ScanEntry{local, relative, false, {}};
+        return ScanEntry{local, relative, false, {}, {}};
     }
     return {};
 }

@@ -2,6 +2,8 @@
 #include "TaskModel.h"
 #include "pages/BackupPage.h"
 #include <QApplication>
+#include <QComboBox>
+#include <QLineEdit>
 #include <QEventLoop>
 #include <QLabel>
 #include <QListWidget>
@@ -70,6 +72,17 @@ int main(int argc, char **argv) {
         check(table, "backup preview table exists");
         auto *model = qobject_cast<TaskModel *>(table->model());
         check(model, "real backup preview model exists");
+        auto *scope = window.findChild<QComboBox *>("backupScope");
+        check(scope && scope->count() == 4, "four backup scopes");
+        window.show(); settle();
+        auto *includes = window.findChild<QLineEdit *>("backupIncludes");
+        check(includes && !includes->isVisible(), "advanced rules hidden by default");
+        scope->setCurrentIndex(3); settle();
+        check(includes->isVisible(), "rules shown for rule scope");
+        scope->setCurrentIndex(2); settle();
+        check(!includes->isVisible() && window.findChild<QLineEdit *>("backupDirectory")->isReadOnly(),
+              "explicit selection cannot turn into parent traversal by editing text");
+        scope->setCurrentIndex(0);
         for (int rows : {0, 3, 200}) {
             model->clear();
             for (int i = 0; i < rows; ++i) {
@@ -109,6 +122,10 @@ int main(int argc, char **argv) {
                       "last preview row remains reachable");
             }
         }
+        scope->setCurrentIndex(3); settle();
+        checkPreview(table, "rule scope small window");
+        check(table->viewport()->height() >= 50, "rule controls leave a usable table");
+        if (argc > 1) check(window.grab().save(QString::fromLocal8Bit(argv[1])), "scope screenshot");
         std::cout << "backup layout: empty, short and long models across window states passed\n";
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

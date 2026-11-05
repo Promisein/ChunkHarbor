@@ -7,7 +7,10 @@ namespace {
 bool sameConfiguration(const gui::BackupConfig &a, const gui::BackupConfig &b) {
     return QDir::cleanPath(a.directory) == QDir::cleanPath(b.directory) && a.prefix == b.prefix &&
            a.host == b.host && a.direct == b.direct && a.port == b.port && a.chunkSize == b.chunkSize && a.mode == b.mode &&
-           a.exclusions == b.exclusions && a.resume == b.resume;
+           a.exclusions == b.exclusions && a.resume == b.resume && a.scope == b.scope &&
+           a.mappingRoot == b.mappingRoot && a.selectedFiles == b.selectedFiles &&
+           a.inclusions == b.inclusions && a.taskExclusions == b.taskExclusions &&
+           a.includeHidden == b.includeHidden;
 }
 } // namespace
 TransferController::TransferController(WorkspaceStore *store, QObject *parent)
@@ -36,6 +39,7 @@ void TransferController::invalidatePreview() {
     if (busy_) return;
     previewReady_ = false;
     pinned_.clear();
+    selectionSummary_.clear();
     recommendation_ = tr("配置已更改或尚未扫描，请重新扫描以核验服务器状态。 ");
     emit previewReady(false);
     emit recommendationChanged(recommendation_);
@@ -128,6 +132,11 @@ void TransferController::launch(gui::BackupConfig config, bool preview) {
                 busy_ = false;
                 bool success = !result.cancelled && result.failed == 0;
                 if (preview) {
+                    selectionSummary_ = tr("已检查文件 %1　过滤文件 %2　参与 %3　剪枝目录 %4（后代未遍历）")
+                        .arg(result.examinedFiles).arg(result.excludedFiles)
+                        .arg(result.examinedFiles - result.excludedFiles).arg(result.prunedDirectories);
+                    if (!result.planComplete || result.cancelled)
+                        selectionSummary_ = tr("扫描未完整结束，当前统计不代表完整范围。");
                     recommendation_ = result.cancelled ? tr("扫描已取消，建议无效，请重新扫描。")
                         : result.failed && !result.planComplete ? tr("核验失败，扫描未完成，暂不能提供可靠计划，请检查日志并重新扫描。")
                         : gui::modeRecommendation(model_->records(), config.mode == "auto");
@@ -157,6 +166,7 @@ void TransferController::launch(gui::BackupConfig config, bool preview) {
                                    .arg(result.failed)
                                    .arg(result.skipped)
                                    .arg(result.cancelled ? tr("，已取消，可重试续传") : QString{});
+                summary += tr("；过滤文件 %1，剪枝目录 %2").arg(result.excludedFiles).arg(result.prunedDirectories);
                 store_->appendLog(success ? "信息" : "警告", summary);
                 emit finished(summary, success);
             },

@@ -284,6 +284,16 @@ int main(int argc, char **argv) {
         check(QFile::rename(source.fileName(), renamed));
         r = gui::runBackup(c, true, {}, other, cb);
         check(r.failed > 0 && server.queries == 0);
+        c.mappingRoot = c.directory;
+        r = gui::runBackup(c, true, {}, other, cb);
+        check(r.failed > 0 && server.queries == 0);
+        c.inclusions = {"*.cpp"};
+        c.taskExclusions = {"*.tmp"};
+        r = gui::runBackup(c, true, {}, other, cb);
+        check(r.failed > 0 && server.queries == 0); // Inactive Rules fields cannot weaken Folder safety.
+        c.inclusions.clear();
+        c.taskExclusions.clear();
+        c.mappingRoot.clear();
         check(QFile::rename(renamed, source.fileName()));
         {
             auto automatic = c;
@@ -362,6 +372,28 @@ int main(int argc, char **argv) {
         check(pending.wait_for(std::chrono::milliseconds(30)) == std::future_status::timeout);
         paused.cancel();
         check(pending.get().cancelled);
+        // Explicit selection reuses the old upload/session machinery without
+        // enumerating an oversized sibling or accusing unrelated sessions.
+        server.wrongId = false;
+        server.evilPlan = 0;
+        c.mode = "auto";
+        c.scope = gui::BackupScope::SingleFile;
+        c.mappingRoot = c.directory;
+        c.selectedFiles = {source.fileName()};
+        c.stateDirectory = dir.path() + "/selection-state";
+        QFile sibling(c.directory + "/unselected-large");
+        check(sibling.open(QIODevice::WriteOnly) && sibling.resize(65LL * 1024 * 1024));
+        sibling.close();
+        uploaded.clear();
+        r = gui::runBackup(c, true, {}, other, cb);
+        check(!r.failed && r.examinedFiles == 1 && uploaded.size() == 1);
+        const auto selectedPins = uploaded;
+        r = gui::runBackup(c, false, selectedPins, other, cb);
+        check(!r.failed && r.succeeded == 1);
+        c.selectedFiles.append(sibling.fileName());
+        c.scope = gui::BackupScope::Files;
+        r = gui::runBackup(c, false, selectedPins, other, cb);
+        check(r.failed > 0); // Cannot expand a confirmed selection at execution.
         // A state path which is an ordinary file must stop before a request.
         c.stateDirectory = source.fileName();
         r = gui::runBackup(c, true, {}, other, cb);

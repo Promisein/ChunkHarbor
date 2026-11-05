@@ -1,4 +1,5 @@
 #include "TransferTypes.h"
+#include "BackupSelection.h"
 #include "chunkharbor/client_core/DeltaExchange.h"
 #include "chunkharbor/client_core/DirectoryScanner.h"
 #include "chunkharbor/client_core/HandshakeExchange.h"
@@ -370,19 +371,20 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
         if (config.stateDirectory.isEmpty())
             throw std::runtime_error("state directory required");
         auto stateDir = QFileInfo(config.stateDirectory).absoluteFilePath();
-        auto root = QFileInfo(config.directory).absoluteFilePath();
+        auto root = QFileInfo(config.mappingRoot.isEmpty() ? config.directory : config.mappingRoot).absoluteFilePath();
         if (root == stateDir)
             throw std::runtime_error("state directory cannot equal source root");
         if (!QDir().mkpath(stateDir))
             throw std::runtime_error("cannot create state directory");
-        std::set<std::string> exclusions;
-        for (const auto &e : config.exclusions)
-            exclusions.insert(utf8(e));
-        DirectoryScanner scanner(fsPath(root), exclusions, fsPath(stateDir));
         QList<FileRecord> records;
         std::set<QString> scannedPaths;
         emitProgress("正在扫描", true);
-        while (auto e = scanner.next()) {
+        const auto selection = selectBackupFiles(config, control);
+        result.examinedFiles = selection.examinedFiles;
+        result.excludedFiles = selection.excludedFiles;
+        result.prunedDirectories = selection.prunedDirectories;
+        for (const auto &selected : selection.entries) {
+            const auto *e = &selected;
             cancelled(control);
             FileRecord r;
             r.localPath = QFileInfo(qstr(e->localPath.u8string())).absoluteFilePath();
@@ -394,11 +396,11 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
             scannedPaths.insert(r.logicalPath);
             r.endpoint = endpoint;
             if (e->excluded) {
+                if (QFileInfo(r.localPath).isFile()) r.size = static_cast<quint64>(QFileInfo(r.localPath).size());
                 r.status = "已跳过";
                 r.change = "已排除";
-                r.note = "目录排除规则";
+                r.note = qstr(e->exclusionReason);
                 entry(r);
-                ++result.skipped;
                 continue;
             }
             if (!e->error.empty()) {
@@ -419,7 +421,15 @@ RunResult runBackup(const BackupConfig &config, bool preview, const QList<FileRe
             records.append(r);
         }
         // An unfinished task must not silently forget a source deleted between runs.
-        { // Retain safety checks even when automatic resume is disabled.
+        const auto scanRoot = QFileInfo(config.directory).absoluteFilePath();
+#ifdef Q_OS_WIN
+        const bool wholeRoot = scanRoot.compare(root, Qt::CaseInsensitive) == 0;
+#else
+        const bool wholeRoot = scanRoot == root;
+#endif
+        if (config.scope == BackupScope::Folder && wholeRoot && config.includeHidden) {
+            // Legacy whole-directory tasks retain the missing-source check. A partial
+            // selection does not own checkpoints for files outside its candidate set.
             std::set<QString> currentUploads;
             if (automatic)
                 for (const auto &r : records)

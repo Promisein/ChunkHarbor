@@ -10,8 +10,13 @@
 #include <mutex>
 
 namespace gui {
+enum class BackupScope { Folder, SingleFile, Files, Rules };
 struct BackupConfig {
     QString directory, prefix, stateDirectory;
+    BackupScope scope = BackupScope::Folder;
+    QString mappingRoot;
+    QStringList selectedFiles, inclusions, taskExclusions;
+    bool includeHidden = true;
     QString host = "127.0.0.1";
     bool direct = false;
     quint16 port = 18787;
@@ -61,6 +66,7 @@ struct WorkerCallbacks {
 };
 struct RunResult {
     int succeeded = 0, failed = 0, skipped = 0;
+    int examinedFiles = 0, excludedFiles = 0, prunedDirectories = 0;
     bool cancelled = false;
     bool planComplete = false; // A complete scan may contain isolated file errors.
 };

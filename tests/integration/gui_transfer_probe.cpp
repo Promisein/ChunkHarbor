@@ -3,6 +3,7 @@
 #include "WorkspaceStore.h"
 #include <QApplication>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -43,6 +44,24 @@ int main(int argc, char **argv) {
     QSettings().setValue("task/directory", args[2]);
     QSettings().setValue("task/prefix", args[4]);
     QSettings().setValue("task/mode", args[6]);
+    QJsonObject selection;
+    const auto selectionArg = args.indexOf("--selection");
+    if (selectionArg >= 0) {
+        if (selectionArg+1 >= args.size()) return 64;
+        QFile spec(args[selectionArg+1]);
+        if (!spec.open(QIODevice::ReadOnly)) return 64;
+        selection = QJsonDocument::fromJson(spec.readAll()).object();
+        QSettings settings;
+        settings.setValue("task/scope", selection["scope"].toInt());
+        settings.setValue("task/mappingRoot", selection["mappingRoot"].toString());
+        settings.setValue("task/selectedFiles", selection["files"].toVariant().toStringList());
+        settings.setValue("task/includes", selection["includes"].toString());
+        settings.setValue("task/excludes", selection["excludes"].toString());
+        settings.setValue("task/includeHidden", selection["hidden"].toBool(true));
+    }
+    QSettings().setValue("task/directory", args[2]);
+    QSettings().setValue("task/prefix", args[4]);
+    QSettings().setValue("task/mode", args[6]);
     MainWindow window(nullptr, args[1]);
     window.findChild<QListWidget *>("navigation")->setCurrentRow(1);
     auto *c = window.controller();
@@ -57,6 +76,14 @@ int main(int argc, char **argv) {
     config.chunkSize = 32768;
     config.mode = args[6];
     config.resume = !args.contains("--no-auto-resume");
+    if (!selection.isEmpty()) {
+        config.scope = static_cast<gui::BackupScope>(selection["scope"].toInt());
+        config.mappingRoot = selection["mappingRoot"].toString();
+        config.selectedFiles = selection["files"].toVariant().toStringList();
+        config.inclusions = selection["includes"].toString().split(';', Qt::SkipEmptyParts);
+        config.taskExclusions = selection["excludes"].toString().split(';', Qt::SkipEmptyParts);
+        config.includeHidden = selection["hidden"].toBool(true);
+    }
     QString operation = args[5];
     const auto originalDirectory = config.directory;
     int switchScans = 0;
@@ -89,7 +116,9 @@ int main(int argc, char **argv) {
             return;
         }
         if (!uploading && ok && (operation == "mode-change" || operation == "prefix-change" ||
-                                 operation == "directory-change")) {
+                                 operation == "directory-change" || operation == "scope-change" ||
+                                 operation == "mapping-change" || operation == "rules-change" ||
+                                 operation == "hidden-change" || operation == "selection-change")) {
             uploading = true;
             if (operation == "mode-change") {
                 config.mode = config.mode == "full" ? "incremental" : "full";
@@ -98,11 +127,27 @@ int main(int argc, char **argv) {
             } else if (operation == "prefix-change") {
                 config.prefix += "-changed";
                 window.findChild<QLineEdit *>("backupPrefix")->setText(config.prefix);
-            } else {
+            } else if (operation == "directory-change") {
                 config.directory += "/changed";
                 window.findChild<QLineEdit *>("backupDirectory")->setText(config.directory);
+            } else if (operation == "scope-change") {
+                config.scope = gui::BackupScope::Files;
+                window.findChild<QComboBox *>("backupScope")->setCurrentIndex(2);
+            } else if (operation == "mapping-change") {
+                config.mappingRoot += "/changed";
+                window.findChild<QLineEdit *>("backupMappingRoot")->setText(config.mappingRoot);
+            } else if (operation == "rules-change") {
+                config.inclusions.append("*.changed");
+                window.findChild<QLineEdit *>("backupIncludes")->setText("*.changed");
+            } else if (operation == "hidden-change") {
+                config.includeHidden = !config.includeHidden;
+                window.findChild<QCheckBox *>("backupHidden")->setChecked(config.includeHidden);
+            } else {
+                // Exercise the controller's complete-config comparison even if an
+                // external caller forgets to invalidate the preview explicitly.
+                config.selectedFiles.append(config.directory + "/unselected");
             }
-            if (c->hasPreview()) { app.exit(66); return; }
+            if (operation != "selection-change" && c->hasPreview()) { app.exit(66); return; }
             QTimer::singleShot(0, c, [&] { c->start(config); });
             return;
         }

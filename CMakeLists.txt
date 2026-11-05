@@ -100,6 +100,7 @@ if(CHUNKHARBOR_BUILD_GUI)
     add_library(chunkharbor_gui_transfer STATIC
         apps/gui/TransferController.cpp apps/gui/TransferController.h
         apps/gui/BackupWorker.cpp apps/gui/TransferTypes.h
+        apps/gui/BackupSelection.cpp apps/gui/BackupSelection.h
         apps/gui/QtTcpTransport.cpp apps/gui/QtTcpTransport.h
         apps/gui/ServerFilesModel.cpp apps/gui/ServerFilesModel.h
         apps/gui/FileListController.cpp apps/gui/FileListController.h
@@ -184,6 +185,12 @@ if(CHUNKHARBOR_BUILD_TESTS)
     if(CHUNKHARBOR_BUILD_GUI)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         find_package(Qt6 REQUIRED COMPONENTS Test)
+        add_executable(chunkharbor-backup-selection-test tests/unit/backup_selection_test.cpp)
+        target_link_libraries(chunkharbor-backup-selection-test PRIVATE chunkharbor_gui_transfer)
+        if(MSVC)
+            target_compile_options(chunkharbor-backup-selection-test PRIVATE /utf-8)
+        endif()
+        add_test(NAME backup_selection_test COMMAND chunkharbor-backup-selection-test)
         add_executable(chunkharbor-snapshot-page-test tests/unit/snapshot_page_test.cpp apps/gui/styles/styles.qrc)
         set_target_properties(chunkharbor-snapshot-page-test PROPERTIES AUTORCC ON)
         target_link_libraries(chunkharbor-snapshot-page-test PRIVATE chunkharbor_gui_pages)

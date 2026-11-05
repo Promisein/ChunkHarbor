@@ -17,6 +17,7 @@ class TransferController final : public QObject {
     void scan(gui::BackupConfig);
     void invalidatePreview();
     QString recommendation() const { return recommendation_; }
+    QString selectionSummary() const { return selectionSummary_; }
     void start(gui::BackupConfig);
     void retry();
     void pauseOrResume();
@@ -37,6 +38,7 @@ class TransferController final : public QObject {
     gui::BackupConfig lastConfig_, previewConfig_;
     QList<gui::FileRecord> pinned_;
     QString recommendation_ = "扫描后将依据服务器版本和会话给出建议。";
+    QString selectionSummary_;
     std::shared_ptr<gui::RunControl> control_;
     std::thread worker_;
 };
