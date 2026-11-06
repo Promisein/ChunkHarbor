@@ -1,6 +1,8 @@
 #include "chunkharbor/concurrency/DiskExecutor.h"
 #include "chunkharbor/net/EventLoop.h"
+#include <atomic>
 #include <future>
+#include <memory>
 #include <stdexcept>
 #include <thread>
 
@@ -67,5 +69,50 @@ int main() {
     });
     for (auto& producer : producers) producer.join();
     loop.run(); concurrent.stop();
-    return accepted == 32 && delivered == 32 ? 0 : 11;
+    if (accepted != 32 || delivered != 32) return 11;
+    EventLoop saturatedLoop;
+    DiskExecutor saturated(saturatedLoop, 2, 3);
+    std::promise<void> firstStarted, secondStarted, allowFinish;
+    auto releaseWorkers = allowFinish.get_future().share();
+    int completed = 0;
+    bool heartbeat = false;
+    auto onComplete = [&](DiskExecutor::Result result) {
+        if (result.error || std::any_cast<int>(result.value) != 7 ||
+            !saturatedLoop.isInLoopThread()) throw std::runtime_error("saturated callback");
+        if (++completed == 3) saturatedLoop.quit();
+    };
+    saturated.trySubmit([&] {
+        firstStarted.set_value(); releaseWorkers.wait(); return std::any(7);
+    }, onComplete);
+    saturated.trySubmit([&] {
+        secondStarted.set_value(); releaseWorkers.wait(); return std::any(7);
+    }, onComplete);
+    firstStarted.get_future().wait();
+    secondStarted.get_future().wait();
+    if (saturated.trySubmit([] { return std::any(7); }, onComplete) != DiskExecutor::Submit::Accepted) {
+        allowFinish.set_value();
+        saturated.stop();
+        return 12;
+    }
+    std::atomic_bool rejectedWorkRan{false};
+    auto rejectedCapture = std::make_shared<int>(7);
+    std::weak_ptr<int> rejectedWeak = rejectedCapture;
+    const auto rejection = saturated.trySubmit([rejectedCapture, &rejectedWorkRan] {
+        rejectedWorkRan = true;
+        return std::any(*rejectedCapture);
+    }, [rejectedCapture](auto) {});
+    rejectedCapture.reset();
+    if (saturated.outstanding() != 3 || rejection != DiskExecutor::Submit::Full ||
+        rejectedWorkRan || !rejectedWeak.expired()) {
+        allowFinish.set_value();
+        saturated.stop();
+        return 13;
+    }
+    saturatedLoop.queueInLoop([&] {
+        heartbeat = true;
+        allowFinish.set_value();
+    });
+    saturatedLoop.run();
+    saturated.stop();
+    return heartbeat && completed == 3 && saturated.outstanding() == 0 ? 0 : 14;
 }

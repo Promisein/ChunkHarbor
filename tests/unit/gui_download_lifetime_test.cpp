@@ -22,10 +22,13 @@ int main(int argc, char **argv) {
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
     QSettings().setValue("storage/logDirectory", temp.filePath("logs"));
+    QSettings().setValue("connection/mode", "tcp");
+    QSettings().setValue("connection/tcpHost", "127.0.0.1");
     try {
         for (int attempt = 0; attempt < 10; ++attempt) {
             QTcpServer server;
             if (!server.listen(QHostAddress::LocalHost, 0)) throw std::runtime_error("listen failed");
+            QSettings().setValue("connection/tcpPort", server.serverPort());
             auto window = std::make_unique<MainWindow>(nullptr, temp.filePath(QString::number(attempt)));
             window->findChild<QSpinBox *>("serverPort")->setValue(server.serverPort());
             window->fileListController()->model()->setPage({{{"a", std::string(32, '1'), 0,

@@ -67,10 +67,12 @@ int main(int argc, char **argv) {
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
     QSettings().setValue("storage/logDirectory", temp.filePath("logs"));
+    QSettings().setValue("connection/mode", "tcp");
+    QSettings().setValue("connection/tcpHost", "127.0.0.1");
     try {
         QTcpServer listener;
         require(listener.listen(QHostAddress::LocalHost), "listen");
-        auto window = std::make_unique<MainWindow>(nullptr, temp.filePath("data"));
+        auto window = std::make_unique<MainWindow>(nullptr, temp.filePath("data"), MainWindow::StartupMode::Manual);
         const auto args = app.arguments();
         const bool sshMode = args.value(1).toUShort() != 0;
         window->findChild<QSpinBox *>("serverPort")->setValue(

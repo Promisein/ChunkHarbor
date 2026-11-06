@@ -1,6 +1,6 @@
 # ChunkHarbor
 
-Windows GUI 支持可信虚拟机网络上的直接 TCP 和既有 SSH 本地转发。Ubuntu 默认监听回环，直连需显式配置 `--bind`。见 [R2.6 连接指南](docs/R2_6_CONNECTIONS.md)。
+Windows GUI 支持可信虚拟机网络上的直接 TCP 和自动管理的 SSH 本地转发。SSH 密钥与主机信任一次性配置完成后，日常使用无需打开终端。Ubuntu 默认监听回环，直连需显式配置 `--bind`。见 [R2.6 连接指南](docs/R2_6_CONNECTIONS.md)与[SSH 自动管理](docs/R2_6_MANAGED_SSH.md)。
 
 后续开发需求已冻结，采用 [R1–R8 路线图](docs/ROADMAP_V3.md)：单用户可靠性 → 单服务器多用户隔离 → 性能与规模验证。M0–M7 保留为原始历史编号。当前源码、跨机器版本及验证边界见 [2026-11-03 审计](docs/PROJECT_AUDIT_2026-11-03.md)，每轮状态见 [PROGRESS 顶部](docs/PROGRESS.md)。
 

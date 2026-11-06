@@ -57,6 +57,7 @@ if(linux_default)
     target_link_libraries(chunkharbor_linux_net PUBLIC Threads::Threads)
     add_library(chunkharbor_server_core src/storage/TempFileStore.cpp src/storage/SqliteStore.cpp)
     target_include_directories(chunkharbor_server_core PUBLIC include)
+    target_include_directories(chunkharbor_server_core SYSTEM PRIVATE third_party)
     target_compile_definitions(chunkharbor_server_core PRIVATE
         CHUNKHARBOR_SCHEMA_V1_PATH="${CMAKE_CURRENT_SOURCE_DIR}/src/storage/schema_v1.sql")
     target_link_libraries(chunkharbor_server_core PUBLIC chunkharbor_protocol PRIVATE Threads::Threads SQLite::SQLite3)
@@ -102,6 +103,7 @@ if(CHUNKHARBOR_BUILD_GUI)
         apps/gui/BackupWorker.cpp apps/gui/TransferTypes.h
         apps/gui/BackupSelection.cpp apps/gui/BackupSelection.h
         apps/gui/QtTcpTransport.cpp apps/gui/QtTcpTransport.h
+        apps/gui/SshTunnelManager.cpp apps/gui/SshTunnelManager.h
         apps/gui/ServerFilesModel.cpp apps/gui/ServerFilesModel.h
         apps/gui/FileListController.cpp apps/gui/FileListController.h
         apps/gui/DownloadController.cpp apps/gui/DownloadController.h
@@ -109,6 +111,9 @@ if(CHUNKHARBOR_BUILD_GUI)
         apps/gui/DownloadOutput.cpp apps/gui/DownloadOutput.h)
     set_target_properties(chunkharbor_gui_transfer PROPERTIES AUTOMOC ON)
     target_link_libraries(chunkharbor_gui_transfer PUBLIC chunkharbor_gui_state chunkharbor_client_core Qt6::Network)
+    if(WIN32)
+        target_link_libraries(chunkharbor_gui_transfer PRIVATE iphlpapi ws2_32)
+    endif()
     add_library(chunkharbor_gui_pages STATIC apps/gui/MainWindow.cpp apps/gui/MainWindow.h
         apps/gui/widgets/InfoCard.cpp apps/gui/widgets/TableKit.cpp apps/gui/pages/WorkspacePage.cpp
         apps/gui/pages/DashboardPage.cpp apps/gui/pages/BackupPage.cpp
@@ -185,6 +190,22 @@ if(CHUNKHARBOR_BUILD_TESTS)
     if(CHUNKHARBOR_BUILD_GUI)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         find_package(Qt6 REQUIRED COMPONENTS Test)
+        if(WIN32)
+            add_executable(chunkharbor-ssh-process-fixture tests/integration/ssh_process_fixture.cpp)
+            target_link_libraries(chunkharbor-ssh-process-fixture PRIVATE chunkharbor_protocol Qt6::Network)
+            add_executable(chunkharbor-managed-ssh-probe tests/integration/managed_ssh_probe.cpp apps/gui/styles/styles.qrc)
+            set_target_properties(chunkharbor-managed-ssh-probe PROPERTIES AUTORCC ON)
+            target_link_libraries(chunkharbor-managed-ssh-probe PRIVATE chunkharbor_gui_pages)
+            add_executable(chunkharbor-managed-ssh-test tests/unit/managed_ssh_test.cpp apps/gui/styles/styles.qrc)
+            set_target_properties(chunkharbor-managed-ssh-test PROPERTIES AUTORCC ON)
+            add_dependencies(chunkharbor-managed-ssh-test chunkharbor-ssh-process-fixture)
+            target_link_libraries(chunkharbor-managed-ssh-test PRIVATE chunkharbor_gui_pages)
+            add_test(NAME managed_ssh_test COMMAND chunkharbor-managed-ssh-test)
+            set_tests_properties(managed_ssh_test PROPERTIES TIMEOUT 40 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            if(MSVC)
+                target_compile_options(chunkharbor-managed-ssh-test PRIVATE /utf-8)
+            endif()
+        endif()
         add_executable(chunkharbor-backup-selection-test tests/unit/backup_selection_test.cpp)
         target_link_libraries(chunkharbor-backup-selection-test PRIVATE chunkharbor_gui_transfer)
         if(MSVC)
@@ -461,6 +482,38 @@ if(CHUNKHARBOR_BUILD_TESTS)
             set_tests_properties(download_fault_test PROPERTIES TIMEOUT 60)
             add_library(chunkharbor-delta-crash-hook SHARED tests/helpers/delta_crash_hook.cpp)
             target_link_libraries(chunkharbor-delta-crash-hook PRIVATE ${CMAKE_DL_LIBS})
+            add_test(NAME delta_plan_lock_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_plan_lock_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(delta_plan_lock_integration PROPERTIES TIMEOUT 90)
+            add_test(NAME delta_materialize_lock_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_materialize_lock_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(delta_materialize_lock_integration PROPERTIES TIMEOUT 90)
+            add_test(NAME delta_query_lock_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_query_lock_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(delta_query_lock_integration PROPERTIES TIMEOUT 90)
+            add_test(NAME delta_commit_lock_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_commit_lock_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(delta_commit_lock_integration PROPERTIES TIMEOUT 120)
+            add_test(NAME delta_lifecycle_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_lifecycle_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(delta_lifecycle_integration PROPERTIES TIMEOUT 120)
+            add_test(NAME preparation_ownership_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/preparation_ownership_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(preparation_ownership_integration PROPERTIES TIMEOUT 120)
+            add_test(NAME legacy_index_lock_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/legacy_index_lock_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(legacy_index_lock_integration PROPERTIES TIMEOUT 120)
+            add_test(NAME a_stage_acceptance_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/a_stage_acceptance_test.py
+                $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)
+            set_tests_properties(a_stage_acceptance_integration PROPERTIES TIMEOUT 120)
             add_test(NAME delta_recovery_integration COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/delta_recovery_test.py
                 $<TARGET_FILE:chunkharbor-server> $<TARGET_FILE:chunkharbor-delta-crash-hook>)

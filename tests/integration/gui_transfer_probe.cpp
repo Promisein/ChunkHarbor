@@ -36,6 +36,11 @@ int main(int argc, char **argv) {
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, args[1] + "/settings");
     const auto directHost = qEnvironmentVariable("CHUNKHARBOR_TEST_TCP_HOST");
+    // Existing Python fixtures own their external forwarding process. Treat that
+    // private test endpoint as TCP; the managed-tunnel probe tests GUI-owned SSH.
+    QSettings().setValue("connection/mode", "tcp");
+    QSettings().setValue("connection/tcpHost", directHost.isEmpty() ? "127.0.0.1" : directHost);
+    QSettings().setValue("connection/tcpPort", args[3].toUInt());
     if (!directHost.isEmpty()) {
         QSettings().setValue("connection/mode", "tcp");
         QSettings().setValue("connection/tcpHost", directHost);
@@ -62,7 +67,7 @@ int main(int argc, char **argv) {
     QSettings().setValue("task/directory", args[2]);
     QSettings().setValue("task/prefix", args[4]);
     QSettings().setValue("task/mode", args[6]);
-    MainWindow window(nullptr, args[1]);
+    MainWindow window(nullptr, args[1], MainWindow::StartupMode::Manual);
     window.findChild<QListWidget *>("navigation")->setCurrentRow(1);
     auto *c = window.controller();
     gui::BackupConfig config;

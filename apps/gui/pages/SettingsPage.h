@@ -1,5 +1,6 @@
 #pragma once
 #include "TransferTypes.h"
+#include "SshTunnelManager.h"
 #include "WorkspacePage.h"
 class QLineEdit;
 class QSpinBox;
@@ -14,9 +15,13 @@ class SettingsPage final : public WorkspacePage {
     QLineEdit *host;
     QSpinBox *port;
     QPushButton *connectButton;
+    QPushButton *disconnectButton;
     QLabel *status;
     gui::BackupConfig backupConfig() const;
     QString serverHost() const;
+    bool isSshMode() const;
+    SshTunnelConfig sshConfig() const;
+    void setEndpointAvailable(bool value) { endpointAvailable_ = value; }
     void setLocalPort(quint16 value);
     QString startupPage() const;
     QString logDirectory() const;
@@ -28,4 +33,7 @@ class SettingsPage final : public WorkspacePage {
     QComboBox *chunk_, *startup_, *connectionMode_;
     QCheckBox *resume_;
     QLineEdit *exclusions_, *logDirectory_;
+    QLineEdit *sshHost_, *sshUser_, *sshTarget_;
+    QSpinBox *sshPort_, *sshTargetPort_;
+    bool endpointAvailable_ = true;
 };

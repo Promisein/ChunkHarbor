@@ -21,7 +21,7 @@ SettingsPage::SettingsPage(QWidget *parent)
     auto *f = new QFormLayout;
     connectionMode_ = new ui::ComboBox(connection);
     connectionMode_->setObjectName("connectionMode");
-    connectionMode_->addItem(tr("SSH 隧道（本地转发）"), "ssh");
+    connectionMode_->addItem(tr("SSH 隧道（自动管理）"), "ssh");
     connectionMode_->addItem(tr("直接 TCP（局域网 / 虚拟机）"), "tcp");
     connectionMode_->setCurrentIndex(p.value("connection/mode").toString() == "tcp" ? 1 : 0);
     host = new QLineEdit(connection);
@@ -29,19 +29,43 @@ SettingsPage::SettingsPage(QWidget *parent)
     port = new QSpinBox(connection);
     port->setObjectName("serverPort");
     port->setRange(1, 65535);
-    auto *credentials = new QLineEdit(connection);
-    credentials->setPlaceholderText(tr("认证功能将在 M7 提供"));
-    credentials->setEnabled(false);
     auto *hostLabel = new QLabel(connection);
     auto *portLabel = new QLabel(connection);
     f->addRow(tr("连接方式"), connectionMode_);
     f->addRow(hostLabel, host);
     f->addRow(portLabel, port);
-    f->addRow(tr("用户名 / 令牌"), credentials);
+    auto *sshFields = new QWidget(connection);
+    auto *sshForm = new QFormLayout(sshFields);
+    sshForm->setContentsMargins(0, 0, 0, 0);
+    sshHost_ = new QLineEdit(p.value("connection/sshHost", "miniob-ubuntu").toString(), sshFields);
+    sshHost_->setObjectName("sshHost");
+    sshUser_ = new QLineEdit(p.value("connection/sshUser").toString(), sshFields);
+    sshUser_->setObjectName("sshUser");
+    sshUser_->setPlaceholderText(tr("留空使用 OpenSSH 配置中的 User"));
+    sshPort_ = new QSpinBox(sshFields);
+    sshPort_->setObjectName("sshServerPort"); sshPort_->setRange(1, 65535);
+    sshPort_->setValue(p.value("connection/sshServerPort", 22).toInt());
+    sshTarget_ = new QLineEdit(p.value("connection/sshTarget", "127.0.0.1").toString(), sshFields);
+    sshTarget_->setObjectName("sshTarget");
+    sshTargetPort_ = new QSpinBox(sshFields);
+    sshTargetPort_->setObjectName("sshTargetPort"); sshTargetPort_->setRange(1, 65535);
+    sshTargetPort_->setValue(p.value("connection/sshTargetPort", 8787).toInt());
+    sshForm->addRow(tr("SSH 主机 / 别名"), sshHost_);
+    sshForm->addRow(tr("SSH 用户"), sshUser_);
+    sshForm->addRow(tr("SSH 端口"), sshPort_);
+    sshForm->addRow(tr("Ubuntu 目标地址"), sshTarget_);
+    sshForm->addRow(tr("备份服务端口"), sshTargetPort_);
+    f->addRow(sshFields);
     connection->body()->addLayout(f);
     connectButton = new QPushButton(tr("检查连接"), connection);
     connectButton->setProperty("primary", true);
-    connection->body()->addWidget(connectButton, 0, Qt::AlignLeft);
+    disconnectButton = new QPushButton(tr("断开连接"), connection);
+    disconnectButton->setObjectName("disconnectConnection");
+    auto *connectionActions = new QHBoxLayout;
+    connectionActions->addWidget(connectButton);
+    connectionActions->addWidget(disconnectButton);
+    connectionActions->addStretch();
+    connection->body()->addLayout(connectionActions);
     auto *connectionHint = new QLabel(connection);
     connectionHint->setWordWrap(true);
     connection->body()->addWidget(connectionHint);
@@ -54,6 +78,7 @@ SettingsPage::SettingsPage(QWidget *parent)
         const QSignalBlocker hostSignals(host), portSignals(port);
         const QSettings settings;
         host->setReadOnly(!direct);
+        sshFields->setVisible(!direct);
         host->setText(direct ? settings.value("connection/tcpHost").toString() : "127.0.0.1");
         host->setPlaceholderText(direct ? tr("输入 Ubuntu IPv4 地址或主机名") : QString{});
         port->setValue(direct ? settings.value("connection/tcpPort", 8787).toInt()
@@ -61,7 +86,7 @@ SettingsPage::SettingsPage(QWidget *parent)
         hostLabel->setText(direct ? tr("服务器地址") : tr("本地转发地址"));
         portLabel->setText(direct ? tr("服务器端口") : tr("本地转发端口"));
         connectionHint->setText(direct ? tr("直接 TCP 不提供 SSH 加密或身份认证，仅用于可信网络。")
-            : tr("请先建立 SSH 本地转发。隧道不可达时连接会失败。"));
+            : tr("应用自动管理 Windows OpenSSH，不需要日常打开终端。使用现有密钥和 ssh-agent；首次登录与主机指纹信任需一次性配置。外部占用的转发端口不会被复用。"));
     };
     loadConnection();
     status->setText(tr("尚未连接。"));
@@ -84,6 +109,17 @@ SettingsPage::SettingsPage(QWidget *parent)
     };
     connect(host, &QLineEdit::textChanged, this, saveEndpoint);
     connect(port, qOverload<int>(&QSpinBox::valueChanged), this, saveEndpoint);
+    const auto saveSsh = [this] {
+        QSettings settings;
+        settings.setValue("connection/sshHost", sshHost_->text().trimmed());
+        settings.setValue("connection/sshUser", sshUser_->text().trimmed());
+        settings.setValue("connection/sshServerPort", sshPort_->value());
+        settings.setValue("connection/sshTarget", sshTarget_->text().trimmed());
+        settings.setValue("connection/sshTargetPort", sshTargetPort_->value());
+        emit connectionChanged(); emit preferencesChanged();
+    };
+    for (auto *edit : {sshHost_, sshUser_, sshTarget_}) connect(edit, &QLineEdit::textChanged, this, saveSsh);
+    for (auto *spin : {sshPort_, sshTargetPort_}) connect(spin, qOverload<int>(&QSpinBox::valueChanged), this, saveSsh);
     auto *backup = new InfoCard(tr("备份设置"), this);
     auto *b = new QFormLayout;
     chunk_ = new ui::ComboBox(backup);
@@ -140,6 +176,7 @@ SettingsPage::SettingsPage(QWidget *parent)
 gui::BackupConfig SettingsPage::backupConfig() const {
     gui::BackupConfig c;
     c.host = serverHost();
+    if (!endpointAvailable_) c.host.clear();
     c.direct = connectionMode_->currentData() == "tcp";
     c.port = static_cast<quint16>(port->value());
     c.chunkSize = chunk_->currentData().toUInt();
@@ -159,8 +196,15 @@ QString SettingsPage::serverHost() const {
     return value.size() <= 253 && dns.match(value).hasMatch() ? value : QString{};
 }
 void SettingsPage::setLocalPort(quint16 value) {
-    connectionMode_->setCurrentIndex(0);
+    // Explicit local TCP probe/test endpoint; never adopt an external SSH listener.
+    connectionMode_->setCurrentIndex(1);
+    host->setText("127.0.0.1");
     port->setValue(value);
+}
+bool SettingsPage::isSshMode() const { return connectionMode_->currentData() == "ssh"; }
+SshTunnelConfig SettingsPage::sshConfig() const {
+    return {sshHost_->text().trimmed(), sshUser_->text().trimmed(), sshTarget_->text().trimmed(),
+        static_cast<quint16>(sshPort_->value()), static_cast<quint16>(port->value()), static_cast<quint16>(sshTargetPort_->value())};
 }
 QString SettingsPage::startupPage() const { return startup_->currentData().toString(); }
 QString SettingsPage::logDirectory() const { return logDirectory_->text().trimmed(); }

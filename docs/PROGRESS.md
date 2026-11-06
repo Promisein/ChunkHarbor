@@ -1,5 +1,92 @@
 # ChunkHarbor 开发进度
 
+## R3.2 A.5.3 最终综合验收：A 阶段关闭（2026-11-06）
+
+- **R3.2 A 通过当前可信单服务/64 MiB/65,536 块边界内验收，正式关闭，可以安排下一轮 B；本轮没有实施 B。** 六项关闭条件及源码、事务、恢复、资源边界见 [A.5.3 记录](R3_2_1GB_SUPPORT.md)。不是 1 GiB 或所有 I/O 无锁/长期性能验收。
+- 新发现 20,000 过期预览由单次 BEGIN 全量持锁清理约 **23.033 s**，独立请求超时；又用 fresh 对照确认全量预览 JSON 解码会阻塞。最小修复：在线清理每轮 32 个、失效上传优先；SQL 先筛 TTL 候选，仅解析过期请求；配额按现有 mode/phase 列计数，仅解码活跃上传大小。启动仍完整清理，单对象持久回收步骤未改，未引入新调度/schema/协议。
+- 最终对照：20,000 条未过期记录保留，query **4.306 ms**；过期后在线清理 32 条、余 19,968，query **31.296 ms**、BEGIN **69.076 ms**。启动完整回收约 **26.782 s**，随后两次启动约 6 ms，未出现准备对象/历史增长。32 个真实 staging 上传优先于 64 个过期预览清理，约 **83.776 ms**。
+- 索引 SQL 精确计时保留必要原子事务：0/4,096/65,536 块分别约 **1.301/22.896/394.420 ms**，事务不读文件正文。原子版本/块清单、current/history/result 事务仍串行；单个有界块持久 ACK 的 hash/pwrite/fdatasync 和受控元数据同步也仍有临界段，不宣称全部系统调用已移锁外。
+- 新 a_stage_acceptance 5 组补充索引/清理计时、两 worker 占满的排队与 Reactor/SQLite 推进、关闭 join、fresh/expired 预览上限及启动最终回收。关闭测试先确认主线程已等待 worker 再释放屏障，并核对计划落库。Full 拒绝任务未执行，work/completion 捕获释放；FD/pin/路径、重复恢复和原 A.1–A.5.2 专项复验通过。
+- 最终 Ubuntu /tmp/chunkharbor-r32-accept-Pv3cRHvQ 配置/构建成功，完整 CTest **65/65，88.13 s**；关键组合 **17/17，54.02 s**。Windows Qt 6.8.3/MinGW 13.1 本轮重新配置/构建，offscreen 非原生 CTest **33/33，121.36 s**；后续仅 Linux 变动后配置/构建无工作。所有红灯、修复和最终日志均记录，未以旧轮成功替代本轮执行。
+- 最新代码真实 Windows → OpenSSH 转发 → 独立 Ubuntu 服务联调通过，根 /tmp/chunkharbor-a53-ssh-9ucmn7rt/backup，覆盖旧上传/增量、断连续传、当前/历史下载、旧快照目录恢复和 SQLite/current/对象核对；测试进程均结束，正式服务和真实用户数据未操作。不是 Qt GUI 人工端到端。真实盘满/掉电/坏盘/TSan/MSVC、原生桌面、GB 和长期压力/吞吐仍未覆盖。
+- B 准备清单已补：限制与类型位置、旧 upload/schema 兼容、下载/历史/快照联动、固定块几何、容量和磁盘预算。A.4 的发布副本使同尺寸一次更新可达 **H + O + 3S（单旧版本约 5S）** 峰值；不能只把 512 MiB 声明配额当卷预算。未知隔离数据、历史/快照长期增长及慢盘临界段风险保留到明确后续任务。
+- 本轮仅修改 DeltaStorage.inc 最小修复、CMake/测试及两份文档；既有归属日志实现和其他脏改动保留。**64 MiB、512 MiB、协议、schema、Qt GUI、固定块算法未改。未 commit/push，未进入 B，本轮停止。**
+
+## R3.2 A.5.2 Legacy 在线索引 I/O 锁隔离（2026-11-06）
+
+- **A.5.2 满足本轮验收条件；整个 A 阶段仍未关闭。** 旧二进制确定性屏障下独立 BEGIN 约 0.3029 s 超时，工作线程分别等待读屏障与 futex，独立 SQLite 写事务可推进。新测试先红灯；修复后屏障未释放时独立请求约 2.1–8.9 ms 正确完成（期限 1 s），消除已复现的 legacy 正文慢读持锁阻塞。
+- 在线 BEGIN 按请求路径补索引，锁内固定 COMMITTED transfer、不可变对象 FD/身份/current 快照，锁外单次流式计算全文件及块摘要，返回锁内复核身份、命名对象、transfer/current，再原子登记索引。正常路径不再读取可变当前副本、创建或复制对象；启动仍补齐全部 legacy。
+- 新 LegacyIndexLease 仅防重复索引，返回已有 BUSY，异常也释放；对象生命周期依靠已提交旧 transfer 的持久引用和现有不可变约定，A.5.1 清理已检查该引用。安全重开/前后 stat/全摘要保留；current 改变返回 CONFLICT，重试不覆盖新指针。Delta 租约、发布与归属语义不变。
+- 新 legacy 专项 **23 场景**通过，包括真实 64 MiB 文件、65,536 块夹具、屏障并发、同路径发布/current 切换、FD 更名、读取/校验/SQL 故障、断连、关闭/重启、A.1–A.4 推进、A.5.1 回收及 10 轮 FD 回落。lifecycle legacy 审计已改为通过性断言，旧行为复现保留 --baseline 和日志。
+- Ubuntu 22.04/GCC 11.4 隔离根 /tmp/chunkharbor-r32-legacy-duQnBGZX 配置/构建成功，完整 CTest **64/64**，63.47 s；最新专项与租约/归属/历史/快照/故障组合 **13/13**，24.86 s。Windows Qt 6.8.3/MinGW 13.1 配置/构建及 offscreen 非原生 CTest **33/33**，127.42 s。
+- 真实 SSH 数据链路通过：Windows Python 协议探针经 Windows OpenSSH 本地转发访问独立 Ubuntu 服务，旧上传后同路径增量只发送缺失 4 字节，检查 current、双历史及不可变对象。根 /tmp/chunkharbor-r32-ssh-u8oxvhc3/backup，测试服务与转发已结束；未操作正式服务或用户备份数据。未执行 Qt GUI 真实端到端、原生桌面、MSVC/TSan、真实掉电/盘满、GB 或并行大文件验证。
+- 变更限于 DeltaStorage.inc、CMake 专项注册、legacy 专项、lifecycle 断言和两份文档。原子索引 SQL/同步、普通元数据扫描、启动恢复和过期清理成本仍需 A.5.3 综合评估，未知旧隔离对象及 R4 历史空间风险仍在。完整调用链、锁/事务边界、测试及命令见 [A.5.2 开发记录](R3_2_1GB_SUPPORT.md)。
+- 保留既有工作树改动；未改 **64 MiB / 512 MiB**、协议、schema、Qt GUI、分块算法或 A.5.1 回收语义。未 commit/push，未进入 B；下一轮单独执行 **A.5.3 综合验收**，本轮停止于 A.5.2。
+
+## R3.2 A.5.1 准备对象持久归属与安全回收（2026-11-06）
+
+- **A.5.1 满足本轮验收条件。** 原三次回滚产生三个未登记对象的问题已再次复现并留存逐对象证据；新实现三次失败复用一份有归属对象，重启安全回收对象和日志，保留上传暂存、accepted 与会话。原有未知隔离对象不自动删除。
+- 新增内部格式 v1 的 .preparations/<session> 原子日志，包含会话、对象 ID、完整请求与 preparing/ready/reclaiming 状态。日志文件及目录同步完成后才允许创建对象；原数据同步完成后写 ready，再执行原 SQLite 准备事务，归属不随事务回滚丢失。复用现有 RAII 租约/activePins 和版本发布机制，schema 保持 v4。
+- 回收仅限有有效日志、无持久引用且无活动 pin 的准备。先持久 reclaiming，再校验并删除受控 pending/data 和目录、同步，最后删除日志并同步。检查 versions/current/history/snapshot/legacy/transfers/session 引用，遇到陌生成员、无效日志或引用冲突保留并失败关闭。COMMITTING/COMMITTED 对象不删除，回收缺失目录可重试，新准备使用新 ID 防止 ABA。
+- 新专项最终 **20 场景通过**，覆盖回滚3次、重复失败/重启、日志与对象创建/写入的崩溃窗口、同步失败、清理失败重试、回收目录删除后 SIGKILL、过期/重复请求竞争、持久引用保护、旧对象保留、格式错误和路径逃逸。A.4/归属/崩溃/故障组合 **4/4**，6.33 s。
+- Ubuntu 22.04/GCC 11.4 隔离根 /tmp/chunkharbor-r32-owner-f1bC4Bgx 配置/构建成功，完整 CTest **63/63**，51.23 s。后续边界补强后专项及组合再次通过。Windows Qt 6.8.3/MinGW 13.1 配置/构建成功，offscreen 非原生 CTest **33/33**，119.57 s。未执行真实 SSH 业务端到端、原生桌面、MSVC/TSan、真实掉电/盘满或 GB 文件测试。
+- 实现位于新增 PreparationJournal.inc 与 DeltaStorage.inc 调用点，复用仓库既有 JSON 依赖，CMake 仅补 server_core 私有 include 和专项注册。A.4/A.5 对已知准备对象的断言改为安全回收，legacy_audit 仍保留开放阻塞。完整格式、崩溃窗口、对象 ID、命令和日志见 [R3.2 开发记录 A.5.1](R3_2_1GB_SUPPORT.md)。
+- 旧归属不明隔离数据、持续 I/O 故障、日志损坏及历史保留空间仍是风险边界。legacy 在线索引锁隔离留 A.5.2，**整个 A 阶段仍未关闭**。未改 64 MiB/512 MiB、协议、Qt GUI 或分块算法，未进入 A.5.2/B，保留既有改动，未 commit/push，本轮停止。
+
+## R3.2 A.5 生命周期修复与综合审计（2026-11-06）
+
+- **A 综合验收未通过，保持未关闭，不进入 B。** 两个实质阻塞已确定性复现：同会话三次准备事务回滚新增 3 个未登记版本对象，重启仅移入 quarantine；runtime legacy 索引仍持共享锁读文件，慢读屏障下独立 BEGIN 在 0.3 s 内超时。审计测试 PASS 表示复现成功，不代表这两项能力已通过。
+- pinnedCommits 泛化为计数 activePins，保护 A.1–A.4 的有效活动任务；重复规划各自持 pin，释放后按原 TTL 过期，未刷新租期。修复旧 phase=7 行反复释放新会话路径的竞态，清理完成后事务删除失效 session/辅助行，文件或 SQL 失败保留可重试状态。
+- 清理 session staging 与 .publish 残留；正常新提交回收冗余传输清单，保留 committed result、versions/history/current/snapshot。启动清理已提交暂存并保留既有数据库行，保证 v2/v3 夹具迁移兼容。为 COMMITTING 恢复与已提交清理失败增加 session ID 级诊断。
+- 新增生命周期专项 **12 场景**，1.26 s，覆盖活动计划/物化/查询与清理、unlink/SQL 故障重试、提交清理失败、两次失败启动后恢复、三次幂等重启、8 轮断连续传/提交与 FD 回落，以及两个开放阻塞审计。工作池补两 worker/容量 3 的确定性饱和、Full、Reactor 心跳和排空检查，未改线程池生产实现。A.1–A.4/生命周期/工作池组合 **6/6**。
+- Ubuntu 隔离根 /tmp/chunkharbor-r32-a5-DCfOYFL2 配置/构建成功。首轮 **60/62**，两个失败暴露启动压缩旧 manifest 破坏迁移保留约定；修正后相关 **4/4**，最终完整 **62/62**，45.44 s。Windows Qt 6.8.3/MinGW 13.1 配置/构建成功，offscreen 非原生 CTest **33/33**，117.73 s。
+- 启动存储恢复在 EventLoop 业务派发与 worker 创建前串行执行，但 TCP socket 已绑定；业务就绪以 HELLO/LISTENING 为准。工作池数量/队列有界，两慢任务会占满执行槽；SQLite/WAL、过期同步与累积元数据的持锁成本仍需后续测量。
+- 下一最小任务先建立准备对象的持久归属/重试复用与精确回收条件，再隔离 legacy 注册的正文 I/O。未知隔离对象不可一概删除，有历史/快照引用的版本均保留。完整状态机、资源表、关闭条件逐项判断及日志见 [R3.2 开发记录 A.5](R3_2_1GB_SUPPORT.md)。
+- 未执行真实 SSH 业务端到端、原生桌面、TSan/MSVC、掉电、真实盘满、1 GiB 或 4–10 GiB 测试。文件上限 64 MiB、配额 512 MiB、协议/schema/Qt GUI/算法均未调整，既有改动保留，未 commit/push，本轮停止。
+
+## R3.2 A.4 提交锁隔离与一致性（2026-11-06）
+
+- 完成 commit→checkBase/object→COMMITTING→publish→current/history/COMMITTED 调用链审计。复用 SessionIoLease，并以 pinnedCommits 防止活动提交被 load/expire 清理。锁内固定输入，锁外执行全文件哈希、基线哈希、对象和发布复制、显式同步；命名空间切换及两次 SQLite 事务继续受共享锁保护。
+- BaseSnapshot 固定父目录/文件 FD 与 inode/dev/size/mtime/ctime，进入持久准备与最终 rename 前重新核对基线和目标身份。路径预留仍拒绝同路径第二个活动上传，旧 Exact 被拒绝。同会话 query/write/重复 commit 返回既有 BUSY；已完成返回原 result，空闲 COMMITTING 可用原 session 安全重试发布。
+- Ubuntu 22.04/GCC 11.4 隔离根 /tmp/chunkharbor-r32-commit-oG6De902 配置与构建成功。旧实现先复现慢提交期间独立 BEGIN 的 1 s 超时；新增最终专项 **26 场景通过**，2.76 s，覆盖六类慢 I/O 屏障的独立请求推进、并发、断连、应答丢失、过期保护、文件/SQL 故障、指针/inode 竞争和恢复。核对文件、不可变对象、versions/history/current/session 与暂存清理，沿用四个原 SIGKILL 发布窗口回归并新增两个崩溃位置。完整 CTest **61/61**，44.24 s；补强断言后最终专项 **1/1**。
+- Windows Qt 6.8.3/MinGW 13.1 配置与构建成功，QT_QPA_PLATFORM=offscreen 的非原生桌面 CTest **33/33**，124.11 s。未运行原生专项、真实 SSH 业务端到端、MSVC/TSan、硬件掉电、真实盘满或 GB 资源测试。
+- A.4 在当前可信单进程/64 MiB 范围达到本轮验收条件。A 整体仍未关闭，A.5 需审计启动重验、legacy/过期与元数据路径、SQLite/WAL 及块清单事务持锁成本、工作池饱和和失败残留对象长期上界。未改变文件上限、512 MiB 配额、协议/schema 或 Qt GUI，未进入 B。
+- 完整设计、锁与事务表、故障状态和测试限制见 [R3.2 开发记录 A.4](R3_2_1GB_SUPPORT.md)。保留既有未提交工作，未 commit/push，本轮停止于 A.4。
+
+## R3.2 A.3 续传查询重验锁隔离（2026-11-06）
+
+- 审计 GUI checkpoint/共享 runDelta/CLI→QUERY_DELTA→UploadHandler→DiskExecutor→DeltaStorage::query→DELTA_STATUS 调用链。旧查询在两把全局锁下重读全部 accepted 暂存块并计算摘要；旧 upload 查询仅遍历内存位图，无同类正文 I/O。
+- 复用 A.2 RAII 租约并泛化为 SessionIoLease/sessionIo。query 在锁内固定 FD/有界块快照，锁外重验，重新校验阶段/身份后用事务撤销失效 accepted。同会话慢 query/write/commit 竞争返回现有 BUSY，阻止迟到结果撤销新 ACK；独立会话可推进。过期 unlink 后 FD 仍有效，迟到结果拒绝安装。
+- Ubuntu 隔离根 /tmp/chunkharbor-r32-query-3Zq8GCWy 配置/构建成功。旧实现先复现独立 BEGIN 的 1 s 超时。新增查询专项 **12 场景通过**，0.77 s，覆盖重复查询、写入/提交竞争、断连、SIGKILL、缺失/损坏/读取错误、过期及实际清理、事务回滚和续传最终提交。完整 CTest **60/60**，42.86 s。
+- Windows Qt 6.8.3/MinGW 13.1 配置与构建成功；offscreen 非原生桌面 CTest **33/33**，124.55 s。未执行原生专项、真实 SSH 业务端到端、TSan/MSVC、GB 样本、真实盘满、掉电与长期压力测试。
+- A.3 最小闭环完成，可以下一轮进入 commit/checkBase/publish 锁隔离审计。A 整体尚未关闭，提交先持锁、启动修复、部分 legacy 协调、查询元数据与 SQLite 提交成本及工作池饱和仍待处理。文件上限 64 MiB、配额 512 MiB、协议/schema/Qt GUI 均未在本轮调整。
+- 详见 [R3.2 开发记录 A.3](R3_2_1GB_SUPPORT.md) 的调用链、设计、BUSY 兼容行为、命令及日志。保留既有未提交工作，未 commit/push，本轮停止于 A.3。
+
+## R3.2 A 第二个闭环，复用块物化锁隔离（2026-11-06）
+
+- planPage 末页在锁内固定基线/暂存 FD 与有界复用清单，锁外执行文件预设大小、逐块读取/摘要核对/写入和文件/目录同步，重加锁校验会话后用事务确认复用块与 TRANSFERRING。进程内 RAII 会话租约禁止重复末页再次截断暂存，同会话竞争返回既有 BUSY；不同会话可同时物化。
+- Linux Ubuntu 22.04/GCC 11.4 隔离根 /tmp/chunkharbor-r32-materialize-jRczwjCF 配置、构建成功。旧实现先复现慢读取期间独立 BEGIN 超时。新专项 **10 场景通过**，含独立请求推进、双会话、同会话竞争、断连、SIGKILL、读取错误、ENOSPC/同步错误注入、安装事务回滚和过期拒绝迟到结果。最终文件、旧对象与恢复位图均核对。完整 CTest **59/59**，41.51 s。
+- Windows Qt 6.8.3/MinGW 13.1 配置和构建成功，QT_QPA_PLATFORM=offscreen 下 ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure -j 2，**33/33**，126.74 s。原生桌面专项、MSVC、TSan、真实盘满和 GB 资源测量未执行。
+- A 整体尚未关闭，query 重验、commit/checkBase/publish 和启动修复仍有长操作。B/C/D 尚未实施，仍为 64 MiB 单文件和 512 MiB 声明大小总配额，未声明 1 GiB 可用。下一项最小任务是 query 重验锁隔离，需协调同会话 write/commit 与失效块结果。
+- 保留开工前的 SSH 管理与上一闭环改动。修改文件、RAII/FD/SQLite 设计、原始命令及日志见 [R3.2 实施记录](R3_2_1GB_SUPPORT.md) 的 2026-11-06 节。未修改协议、schema 或检查点格式，未 commit/push，本轮停止于当前闭环。
+
+## R3.2 A 首个闭环，差量规划锁隔离（2026-11-05）
+
+- 本轮完成实际函数 `DeltaStorage::finishManifest` 的不可变基线读取与 SHA-256 移出共享存储/DB 锁。锁内固定 FD 与有界清单快照，锁外按原 compareBlock 规则计算，再重载会话、校验输入/阶段/预览额度，在单事务内安装完整计划。并发重复 DONE 复用已完成结果，过期与阶段变化阻止迟到安装。
+- Linux 隔离根 `/tmp/chunkharbor-r32-a-fI07y2Ac`，Ubuntu 22.04 / GCC 11.4 配置和构建成功，完整 CTest **58/58**，42.88 s。新增真实服务端 pread 屏障专项 8 场景通过，补强事务回滚断言后专项 **1/1**，0.93 s。旧实现独立 BEGIN 在 1 s 内超时，新实现屏障未释放前独立请求及竞争版本发布在约 24 ms 完成；这是该次推进证据。
+- 专项覆盖双文件同时规划、同会话重复 DONE、Exact 冲突、同路径上传排他、客户端断连、SIGKILL 后从原清单重试、EIO、安全事务回滚及过期会话拒绝安装。Windows Qt 6.8.3 / MinGW 13.1 配置和构建成功，`QT_QPA_PLATFORM=offscreen` 的 `ctest --test-dir build-windows-gui -LE native-desktop --output-on-failure -j 2` **33/33**，111.50 s。
+- A 整体仍有 planPage 复用物化、query 重验、commit/publish 和启动修复的长操作。B/C/D 尚未实施，当前仍为 64 MiB 文件上限及 512 MiB 声明大小总配额。未执行 1 GiB 样本、真实盘满、资源性能采样、原生桌面专项、MSVC 或 TSan。未更改协议、schema 和检查点格式。
+- 保留开工前未提交的 SSH 管理改动。本轮文件、完整命令、日志、设计取舍和边界见 [R3.2 实施记录](R3_2_1GB_SUPPORT.md)。下一项最小任务为 planPage 末页复用物化的锁隔离及慢复制故障验证。本轮停止于当前闭环，未提交或推送。
+
+## R2.6 补充：SSH 隧道自动管理（2026-11-05）
+
+- 新增 `SshTunnelManager`，默认启动恢复连接模式。SSH 使用无窗口 QProcess 调用 Windows OpenSSH，监听 PID 归属核验后再执行原 HELLO；仅进程存活或端口开放不显示服务器可用。拒绝外部转发占用，不复用、不结束其他 SSH 进程。
+- 设置页保存 SSH 主机/别名、可选用户、SSH 端口、本地端口、Ubuntu 目标地址与服务端口，保留原本地端口键和独立 TCP 配置。使用现有密钥、agent、known_hosts；不存密码、不关闭主机密钥校验。支持检查、主动断开、有限 1/2/4 秒退避重连；重连不自动重跑业务，不删除 checkpoint。
+- 关闭先收敛备份/下载/恢复和快照确认，再异步 terminate/超时 kill 自己的进程；Windows Job Object 管理自己创建的树。立即关窗、启动前断开、迟到认证错误覆盖新配置、失效 Connected 状态等竞态均补测试并修复。业务未就绪时不把未知 SSH 监听交给任务。
+- Windows Qt 6.8.3 / MinGW 13.1 全目标构建成功，完整 CTest **34/34**；正式样式资源补入后相关隧道测试再跑 **1/1**。原生 ComboBox 普通/最大化自动交互通过：仅修正动态 SSH 表单布局稳定前发送测试点击的时序，未删除或弱化断言。旧严格协议夹具使用显式 Manual 启动，产品默认 Automatic 不变。
+- Ubuntu 既有完整 CTest **57/57**。真实 Windows OpenSSH 9.5p2→Ubuntu 四组自动隧道测试通过：auto 备份/列表/历史下载、强杀自己隧道后重连、隧道正常而业务服务未启动、16 MiB 活动上传被断开后保留未完成检查点且重新 HELLO 不自动重跑任务；关窗后各自 SSH 均退出，空文件、中文和 1 MiB 文件哈希一致。全部使用专用临时目录，无正式备份数据操作。服务端代码、协议、schema 和业务算法未改。
+- 专项交付见 [R2_6_MANAGED_SSH.md](R2_6_MANAGED_SSH.md)，连接指南及 README 已更新。MSVC、VM 真实关机/重启、真实网络拔线、复杂 ProxyCommand、长期运行和完整人工验收未执行；认证与主机密钥失败用替身验证。未提交或推送，本轮停止于 SSH 管理补充。
+
 ## 灵活备份范围与智能策略复用（2026-11-05）
 
 - Windows 备份页新增整个文件夹、单文件、多个指定文件、按规则筛选四种范围。文件模式只检查明确选中的文件及祖先，不枚举父目录；公共项目映射根与扫描范围分开，预览显示最终远端逻辑路径。改变映射根不会迁移或合并旧版本。

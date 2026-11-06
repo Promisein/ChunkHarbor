@@ -47,7 +47,8 @@ int main(int argc, char **argv) {
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
         QSettings().setValue("storage/logDirectory", temp.filePath("logs"));
-        MainWindow window(nullptr, temp.filePath("data"));
+        QSettings().setValue("connection/mode", "tcp");
+        MainWindow window(nullptr, temp.filePath("data"), MainWindow::StartupMode::Manual);
         const QString label = app.arguments().value(1, "after");
         QDir().mkpath("combo-artifacts");
         auto *nav = window.findChild<QListWidget *>("navigation");
@@ -72,6 +73,9 @@ int main(int argc, char **argv) {
                         if (auto *scroll = qobject_cast<QScrollArea *>(parent)) scroll->ensureWidgetVisible(combo);
                     QTest::qWait(30);
                     combo->setCurrentIndex(0);
+                    // SSH/TCP selection changes visible form rows and label widths.
+                    // Let the layout settle before sending real window coordinates.
+                    QTest::qWait(50);
                     QSignalSpy activated(combo, &QComboBox::activated);
                     open(combo);
                     auto *popup = combo->view()->window();
@@ -85,6 +89,9 @@ int main(int argc, char **argv) {
                           pixels.pixelColor(pixels.width()-1, pixels.height()-1).alpha() < 40,
                           "all popup outer corners must remain transparent");
                     const auto controlLeft = combo->mapToGlobal(QPoint()).x();
+                    if (page == 6) std::cout << "native geometry control=" << controlLeft << " popup=" << popup->x()
+                        << " window=" << window.x() << "," << window.width() << " available="
+                        << popup->screen()->availableGeometry().left() << "," << popup->screen()->availableGeometry().right() << std::endl;
                     check(qAbs(popup->x() + 8 - controlLeft) <= 1, "rounded panel aligns with combo left edge");
                     check(popup->width()-16 >= combo->width(), "rounded panel covers combo width");
                     if (page == 1) {

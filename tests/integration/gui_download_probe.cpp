@@ -31,12 +31,15 @@ int main(int argc, char **argv) {
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
     const auto directHost = qEnvironmentVariable("CHUNKHARBOR_TEST_TCP_HOST");
+    QSettings().setValue("connection/mode", "tcp");
+    QSettings().setValue("connection/tcpHost", directHost.isEmpty() ? "127.0.0.1" : directHost);
+    QSettings().setValue("connection/tcpPort", args[1].toUInt());
     if (!directHost.isEmpty()) {
         QSettings().setValue("connection/mode", "tcp");
         QSettings().setValue("connection/tcpHost", directHost);
     }
     QSettings().setValue("storage/logDirectory", temp.filePath("logs"));
-    auto window = std::make_unique<MainWindow>(nullptr, temp.filePath("workspace"));
+    auto window = std::make_unique<MainWindow>(nullptr, temp.filePath("workspace"), MainWindow::StartupMode::Manual);
     const auto path = args[2];
     const auto target = args[6];
     const bool historical = args[7].startsWith("history_");

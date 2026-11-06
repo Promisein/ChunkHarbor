@@ -66,6 +66,7 @@ int main(int argc, char **argv) {
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
         QSettings().setValue("storage/logDirectory", temp.filePath("logs"));
+        QSettings().setValue("connection/mode", "tcp");
         MainWindow window(nullptr, temp.filePath("data"));
         window.findChild<QListWidget *>("navigation")->setCurrentRow(1);
         auto *table = window.findChild<QTableView *>("backupTable");

@@ -190,7 +190,7 @@ int main(int argc, char **argv) {
         check(dashboard.findChild<QLabel *>("dashboardMetric3")->text().contains("2"),
               "dashboard actual version count");
         QSettings().setValue("storage/logDirectory", temp.filePath("window-logs"));
-        MainWindow window(nullptr, temp.filePath("window"));
+        MainWindow window(nullptr, temp.filePath("window"), MainWindow::StartupMode::Manual);
         check(window.findChild<QLineEdit *>("snapshotRoot"), "snapshot browser entry is available");
         const bool dashboardLayoutOnly = app.arguments().contains("--dashboard-layout");
         window.findChild<QListWidget *>("navigation")->setCurrentRow(dashboardLayoutOnly ? 0 : 2);

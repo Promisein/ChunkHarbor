@@ -39,7 +39,10 @@ int main(int argc, char **argv) {
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());
     QSettings().setValue("storage/logDirectory", temporary.filePath("logs"));
-    auto window = std::make_unique<MainWindow>(nullptr, temporary.filePath("workspace"));
+    QSettings().setValue("connection/mode", "tcp");
+    QSettings().setValue("connection/tcpHost", "127.0.0.1");
+    QSettings().setValue("connection/tcpPort", QString::fromLocal8Bit(argv[1]).toUInt());
+    auto window = std::make_unique<MainWindow>(nullptr, temporary.filePath("workspace"), MainWindow::StartupMode::Manual);
     auto *controller = window->fileListController();
     auto *port = window->findChild<QSpinBox *>("serverPort");
     port->setValue(QString::fromLocal8Bit(argv[1]).toUInt());

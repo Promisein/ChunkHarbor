@@ -53,8 +53,11 @@ int main(int argc, char **argv) {
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                            probeData->path() + "/settings");
         QSettings().setValue("storage/logDirectory", probeData->path() + "/logs");
+        QSettings().setValue("connection/mode", "tcp");
+        QSettings().setValue("connection/tcpHost", "127.0.0.1");
+        QSettings().setValue("connection/tcpPort", parser.value("probe-port").toUInt());
     }
-    MainWindow window(nullptr, probeData ? probeData->path() : QString{});
+    MainWindow window(nullptr, probeData ? probeData->path() : QString{}, probeData ? MainWindow::StartupMode::Manual : MainWindow::StartupMode::Automatic);
     const QStringList pages = {"dashboard", "backup", "files", "versions", "logs", "settings"};
     const auto page = pages.indexOf(parser.value("page").toLower());
     if (page < 0)

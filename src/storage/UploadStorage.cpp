@@ -15,6 +15,7 @@
 #include <mutex>
 #include <set>
 #include <sqlite3.h>
+#include <nlohmann/json.hpp>
 #include <sys/file.h>
 #include <sys/random.h>
 #include <sys/stat.h>

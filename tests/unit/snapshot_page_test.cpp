@@ -94,6 +94,8 @@ int main(int argc, char **argv) {
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
     const auto directHost = qEnvironmentVariable("CHUNKHARBOR_TEST_TCP_HOST");
+    QSettings().setValue("connection/mode", "tcp");
+    QSettings().setValue("connection/tcpHost", directHost.isEmpty() ? "127.0.0.1" : directHost);
     if (!directHost.isEmpty()) {
         QSettings().setValue("connection/mode", "tcp");
         QSettings().setValue("connection/tcpHost", directHost);
@@ -102,7 +104,7 @@ int main(int argc, char **argv) {
     try {
         QTcpServer listener;
         require(listener.listen(QHostAddress::LocalHost), "listen failed");
-        auto window = std::make_unique<MainWindow>(nullptr, temp.filePath("workspace"));
+        auto window = std::make_unique<MainWindow>(nullptr, temp.filePath("workspace"), MainWindow::StartupMode::Manual);
         const bool remote = app.arguments().value(1).toUShort() != 0;
         auto *serverPort = window->findChild<QSpinBox *>("serverPort");
         serverPort->setValue(

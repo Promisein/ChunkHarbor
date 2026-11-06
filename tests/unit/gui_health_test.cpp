@@ -43,6 +43,9 @@ int main(int argc, char **argv) {
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temp.path());
         QSettings().setValue("storage/logDirectory", temp.filePath("logs"));
+        // This fixture owns a plain TCP HELLO peer, not an OpenSSH listener.
+        QSettings().setValue("connection/mode", "tcp");
+        QSettings().setValue("connection/tcpHost", "127.0.0.1");
         QTcpServer server;
         check(server.listen(QHostAddress::LocalHost, 0), "listen");
         int requests = 0, closed = 0;
