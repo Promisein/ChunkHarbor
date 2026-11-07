@@ -1,148 +1,147 @@
 # ChunkHarbor
 
-Windows GUI 支持可信虚拟机网络上的直接 TCP 和自动管理的 SSH 本地转发。SSH 密钥与主机信任一次性配置完成后，日常使用无需打开终端。Ubuntu 默认监听回环，直连需显式配置 `--bind`。见 [R2.6 连接指南](docs/R2_6_CONNECTIONS.md)与[SSH 自动管理](docs/R2_6_MANAGED_SSH.md)。
+**基于 C++17、Qt 与 Linux Reactor 的跨平台增量文件备份与版本恢复系统**
 
-后续开发需求已冻结，采用 [R1–R8 路线图](docs/ROADMAP_V3.md)：单用户可靠性 → 单服务器多用户隔离 → 性能与规模验证。M0–M7 保留为原始历史编号。当前源码、跨机器版本及验证边界见 [2026-11-03 审计](docs/PROJECT_AUDIT_2026-11-03.md)，每轮状态见 [PROGRESS 顶部](docs/PROGRESS.md)。
+ChunkHarbor 面向将本地文件备份到独立 Linux 主机的场景，提供文件选择、差异预览、分块上传和恢复。Windows Qt 图形客户端适合日常操作，CLI 可用于命令行和自动化；服务端使用自主实现的非阻塞 TCP 网络层和文件存储。
 
-R1已于2026-11-03按用户确认完成。R2.1–R2.4已支持当前文件下载、历史版本查询、指定版本下载和服务端目录快照。R2.5.1支持 Windows GUI 浏览快照并生成只读恢复预览。操作和安全边界见 [R2.5.1 快照预览](docs/R2_5_1_SNAPSHOT_PREVIEW.md)。各轮实际结果见 [PROGRESS](docs/PROGRESS.md)。
+系统通过跨平台二进制协议交换备份计划与文件数据。它以固定位置的块摘要减少重复传输，使用持久化会话恢复中断的上传，并通过文件版本和目录快照提供恢复入口。备份方向为客户端到服务端；下载用于恢复数据。
 
-C++17 单向增量备份项目。**M1–M4后端已实现；M5 Windows Qt Widgets客户端已接入真实目录预览、增量备份和持久续传。** 自主Linux Reactor、SQLite会话与固定块增量支持CLI和GUI；Windows经SSH真实备份及服务端SIGKILL后恢复已验证。Linux CLI及Windows GUI支持当前单文件下载校验恢复；TLS/认证未实现。单文件上限64MiB，仅用于可信本机、虚拟机测试网络或 SSH 隧道。
+## 核心功能
 
-M4使用、详细人工复现及自动恢复测试见[M4使用](docs/M4_USAGE.md)；真实构建/测试证据见[M4验证](docs/M4_VALIDATION.md)。旧`upload`命令保持首次上传/已有目标拒绝的语义；重复增量备份使用`backup`。版本对象与最新副本分别存储，尚无历史版本GC或总空间配额。
+- **灵活备份**：选择单个文件、多个文件或递归目录，通过包含和排除规则筛选内容。本地映射根决定相对路径，远端前缀构成服务器上的逻辑路径。自动备份策略按文件选择首次上传、增量、有效会话续传或无变化跳过，也可手动选择模式。
+- **增量传输**：客户端计算文件和固定块 SHA-256，服务端将块清单与基准版本同位置的块比较，生成缺失块计划并复用匹配的数据。无变化文件可跳过数据上传，避免创建重复版本。
+- **断点续传**：客户端保存会话检查点，服务端持久化上传状态和已确认块。重新连接后核对源文件、会话和基准版本，查询缺失部分并继续；服务端启动时也会检查和恢复持久状态。
+- **完整性与安全发布**：传输时校验块摘要，提交时校验整文件；数据先写入暂存空间，再协调文件发布与元数据更新。服务端限制逻辑路径并防范路径穿越和符号链接逃逸；下载使用临时文件、校验后发布，拒绝不安全覆盖。中断或取消可保留可续传状态。
+- **版本与恢复**：浏览服务端当前文件及历史版本，下载当前文件或指定版本；创建和查询目录快照，并按快照恢复文件夹。恢复时绑定具体版本，下载完成后验证内容。
+- **图形界面**：展示扫描结果、差异预览、备份任务、进度和错误，提供文件、版本、快照、日志及设置页面。支持直接 TCP 和由 Windows OpenSSH 客户端管理的 SSH 本地转发。
 
-Windows中文GUI提供总览、备份、文件、版本、日志、设置六页：后台扫描/哈希、服务端差异预览、真实确认进度、暂停/取消/恢复、本机提交历史、日志筛选导出和设置持久化。文件页支持当前文件分页、筛选及选中单文件下载，展示字节进度、状态并允许取消；下载绑定列表版本、逐块及整文件校验、拒绝覆盖。版本历史页保留本机提交记录，可切换到服务端历史，按逻辑路径分页查看版本和当前标记。选中版本后可下载到本地并校验发布。详见[R2.3历史恢复](docs/R2_3_HISTORY_RESTORE.md)。构建和详细操作见[Windows使用](docs/BUILD_WINDOWS.md)，下载见[R2.1](docs/R2_1_GUI_DOWNLOAD.md)，既有验收见[M5验证](docs/M5_VALIDATION.md)和[GUI列表验证](docs/M6_GUI_FILES_VALIDATION.md)。
+## 系统架构
 
-## R1：可靠备份与自动文件计划
+```mermaid
+flowchart LR
+    GUI[Windows Qt GUI] --> CORE[chunkharbor_client_core]
+    CLI[CLI] --> CORE
+    GUI --> TCP[TCP / SSH 本地转发]
+    CLI --> TCP
+    CORE --> PROTO[chunkharbor_protocol]
+    TCP --> SERVER[TcpServer]
+    SERVER --> LOOP[EventLoop + epoll]
+    LOOP --> HANDLER[协议与上传业务处理]
+    HANDLER --> PROTO
+    HANDLER --> DISK[有界 DiskExecutor]
+    DISK --> STORAGE[存储管理]
+    STORAGE --> DB[(SQLite 元数据)]
+    STORAGE --> FILES[(暂存文件与版本数据)]
+```
 
-普通备份流程：选择本地目录与远端相对路径 → 使用“自动备份（推荐）”扫描 → 检查每个文件的执行策略和预计传输量 → 确认开始。新用户默认auto，已有手动偏好保留。
+GUI 和 CLI 使用共享业务代码及协议编码，分别通过平台网络适配连接服务端。服务端网络层负责连接与事件派发，业务处理将磁盘和数据库工作交给有界执行器，再将结果投递回事件循环。SQLite 保存会话、版本和快照等元数据，文件内容存储在服务端备份根目录下。
 
-备份页也支持单文件、多个指定文件和按规则筛选。通过本地映射根固定远端相对路径，选文件时不扫描整个父目录；规则、隐藏属性和使用限制见[灵活备份范围](docs/FLEXIBLE_BACKUP_SCOPE.md)。
+## 核心模块设计
 
-| 模式 | 行为 |
+### Linux Reactor 网络层
+
+`TcpServer` 接受非阻塞连接并管理连接集合；`EventLoop` 驱动事件分发，`EpollPoller` 封装 epoll，`Channel` 将文件描述符事件关联到回调。`TcpConnection` 管理连接生命周期和输入、输出缓冲，处理 TCP 的半包、粘包和部分写入，并通过缓冲限制和读写控制处理背压。当前服务端使用单个网络 EventLoop；磁盘任务由有界工作池执行，不能将其理解为多 Reactor 网络线程池。
+
+### 网络协议层
+
+`chunkharbor_protocol` 定义与 Qt 和平台 socket 解耦的二进制帧及消息编解码，使用明确的字节序和长度处理 TCP 字节流。握手协商协议版本和能力；请求通过标识符匹配响应，错误消息用于传递业务失败。控制消息与文件块消息分别承载会话、清单、计划、数据及恢复操作。
+
+### 客户端业务层
+
+`chunkharbor_client_core` 负责目录扫描、源文件快照、块清单和增量交换等逻辑。GUI 将选择与路径映射、任务状态和界面展示分开；备份扫描、哈希和传输由工作线程执行，结果通过 Qt 信号传回界面。`QTcpSocket` 在所属线程内使用，界面模型负责呈现任务与服务端文件信息。
+
+### 服务端存储层
+
+上传会话使用暂存文件和 SQLite 状态记录块接收情况。块校验、写入及约定的持久化和元数据更新完成后才返回持久确认；提交前还会核对整文件。已提交内容形成不可变版本对象，当前版本指针指向最新版本，目录快照记录恢复所需的版本引用。
+
+文件系统发布与 SQLite 事务是不同的持久化边界，并非一个跨存储原子事务。实现通过同步、发布状态、准备记录及启动恢复协调异常窗口；无法安全确认的数据不会作为成功结果发布。
+
+## 关键工作流程
+
+### 增量备份与续传
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant C as 客户端
+    participant S as 服务端
+    participant D as 文件与 SQLite
+    U->>C: 选择文件，扫描并预览
+    C->>C: 计算源文件与固定块摘要
+    C->>S: 握手、提交清单和基准选择
+    S->>D: 比较基准版本，生成差异计划
+    S-->>C: 缺失块及复用计划
+    U->>C: 确认执行
+    C->>S: 发送需要的块
+    S->>D: 校验、写入并持久化块状态
+    S-->>C: 块确认
+    C->>S: 提交
+    S->>D: 整文件校验、发布版本和记录元数据
+    S-->>C: 提交结果
+```
+
+预览与执行会重新检查相关状态，实际执行不会盲目信任过期预览。上传中断后，客户端从检查点取得会话标识，核验源文件与基准，并向服务端查询会话阶段和缺失块；已确认的块不再发送。若会话或源文件不匹配，则不能把它当作有效续传。最终仍需通过整文件校验和提交。
+
+### 历史版本与目录恢复
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant C as 客户端
+    participant S as 服务端
+    U->>C: 选择文件版本或目录快照
+    C->>S: 查询版本 / 快照及其条目
+    S-->>C: 返回具体版本和元数据
+    C->>S: 按固定版本请求下载
+    S-->>C: 返回文件数据和摘要
+    C->>C: 写入临时文件并校验块与整文件 SHA-256
+    C->>C: 检查目标路径并安全发布
+    C-->>U: 展示恢复结果
+```
+
+目录恢复依照快照条目逐文件处理，避免在恢复过程中将随后变化的当前版本误当成快照内容。
+
+## 技术栈
+
+| 类别 | 实现 |
 | --- | --- |
-| auto（推荐） | 每个文件独立选择首次上传、增量、有效会话续传或跳过；无法安全判断的文件标错，完整扫描后可确认执行其他安全文件 |
-| full | 首次上传，拒绝覆盖已有目标；本任务已完成且内容一致的文件可核验后跳过 |
-| resume | 严格核验本机检查点及服务端会话，无有效会话不静默开始新上传 |
-| incremental | 新文件上传，已有文件按固定索引块复用；无变化跳过；按设置复用匹配未完成会话 |
+| 语言与平台 | C++17、Windows、Linux |
+| 服务端网络 | Linux epoll、非阻塞 TCP、eventfd |
+| 图形与网络 | Qt 6 Widgets、Qt Network |
+| 元数据 | SQLite |
+| 摘要 | SHA-256：Linux 使用 OpenSSL；Qt 客户端使用 QCryptographicHash |
+| 并发 | EventLoop、有界磁盘工作池、Qt 线程与信号槽 |
+| 构建 | CMake 3.20+ |
 
-执行前复核源SHA-256、服务器固定版本及续传会话；配置变化使预览失效。部分失败后“重试 / 恢复”先重新扫描，确认后再执行。损坏/不匹配的检查点保留，不自动删除状态；无变化不创建重复版本。详见 [自动备份设计与验证](docs/R1_AUTO_BACKUP.md)。
+## 项目结构
 
-R1同时修复了GUI健康探测连接正常关闭造成的离线误判、服务端磁盘工作期间误判空闲导致上传断开，以及下拉框圆角外的矩形底框。健康徽标仅表示最近HELLO可达，不代替上传成功或持久确认。
-
-验证采用Windows Qt构建、业务回归与真实Windows→SSH→Ubuntu上传/重启恢复矩阵。下拉框已由用户人工确认；原生自动输入测试的失败记录和人工验收例外保留，不宣称所有自动化全绿。单文件仍限制64MiB，仅可信loopback/SSH使用；R2.1已接入GUI当前单文件下载，R2.2已接入服务端历史查询，目录快照继续按R2推进，TLS/认证及性能扩展按后续路线推进。
-
-## 增量备份快速开始
-
-M6服务端支持`file_list_v1`受限分页文件列表（最多64条/64KiB），Windows GUI已接入，每页请求32条；CLI尚无列表命令。Linux CLI新增`download --path LOGICAL --output LOCAL`，临时下载、逐块/整文件SHA-256校验后原子发布，拒绝覆盖已有文件。下载协议见[M6下载](docs/M6_DOWNLOAD.md)，用法及双平台验收见[下载验证](docs/M6_DOWNLOAD_VALIDATION.md)；列表协议及历史验收见[M6文件列表](docs/M6_FILES_LIST.md)、[列表验证](docs/M6_VALIDATION.md)。
-
-启动下方 Ubuntu 服务端后，在另一终端对专用测试文件执行：
-
-```bash
-work=$(mktemp -d /tmp/chunkharbor-cli-XXXXXXXX)
-printf 'first backup\n' > "$work/source.txt"
-./build/chunkharbor-cli preview --file "$work/source.txt" --path demo/source.txt --state "$work/session.state"
-./build/chunkharbor-cli backup --file "$work/source.txt" --path demo/source.txt --state "$work/session.state"
-./build/chunkharbor-cli backup --file "$work/source.txt" --path demo/source.txt --state "$work/session.state"
+```text
+ChunkHarbor/
+├── apps/
+│   ├── server/       # 服务端入口与业务处理
+│   ├── cli/          # 命令行客户端
+│   └── gui/          # Qt 界面、传输与恢复控制
+├── include/chunkharbor/ # 公共模块接口
+├── src/
+│   ├── net/          # Reactor、连接与缓冲
+│   ├── concurrency/  # 有界磁盘任务执行器
+│   ├── protocol/     # 协议帧与消息编解码
+│   ├── client_core/  # 扫描、备份计划与交换
+│   ├── storage/      # 文件存储、会话、版本与 SQLite
+│   └── common/       # 日志与摘要工具
+├── configs/          # 配置示例
+├── docs/             # 设计与使用文档
+├── tests/            # 单元与集成测试
+└── CMakeLists.txt
 ```
 
-第二次备份预期 `blocks_sent_this_run=0`。Windows CLI、SSH 隧道、目录备份与中断续传步骤见 [M4 使用指南](docs/M4_USAGE.md)。
+## 设计特点与适用边界
 
-## Ubuntu 构建与验证
+- GUI、客户端业务和跨平台协议分层，Linux Reactor 不依赖 Qt；网络事件与磁盘工作分离。
+- 固定索引块比较适合局部内容修改；文件前部插入内容可能导致后续块错位，不能等同于 rolling checksum 或 rsync。
+- 版本对象和目录快照支持按明确版本恢复；历史数据会占用空间，当前没有历史版本垃圾回收或总空间配额。
+- 单文件大小受客户端和服务端版本、能力协商及接口限制；旧上传接口上限为 64 MiB。块数和服务端容量准入也有限制。
+- 当前传输按块请求和确认，服务端网络使用单 EventLoop；并发能力受连接、工作队列和存储资源限制。
+- 系统是单向备份与恢复，不提供双向实时同步。协议本身没有 TLS 或用户身份认证；默认服务端监听回环地址，跨主机使用时应通过可信 SSH 隧道，避免将普通 TCP 端口暴露到不可信网络。
 
-Windows与Ubuntu使用同一完整Git仓库。Ubuntu保留`apps/gui`源码，通过`-DCHUNKHARBOR_BUILD_GUI=OFF`关闭GUI目标，无需Qt；Windows关闭SERVER、开启GUI。构建目录、SDK、测试照片和备份数据留在各自机器，不上传Git。Linux日常入口仍为原工程`/home/ning/ChunkHarbor`，复用原build及依赖；跨机同步使用Git提交和快进更新，先保存并核验目标工作区，不直接覆盖源码。发布轮真实构建/测试结果见PROGRESS顶部，旧M6结果保留在[Ubuntu同步记录](docs/UBUNTU_SYNC.md)中，不当作R1新测试。
-
-在 Ubuntu 的仓库根目录构建，无需 Qt。依赖 CMake 3.20+、GCC、Make、Python 3、OpenSSL 与 SQLite 开发包（Ubuntu `libssl-dev libsqlite3-dev`）；GDB 为可选调试工具。
-
-```bash
-cd /path/to/ChunkHarbor
-cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j 2
-ctest --test-dir build --output-on-failure
-```
-
-M3自动验证包含SQLite事务、重启查询、损坏暂存块、数据库写入故障和Windows CLI经SSH的上传与续传。实际测试命令、结果及人工验收步骤见 [M3 验收](docs/M3_VALIDATION.md)；历史结果见 [M2 验收](docs/M2_VALIDATION.md)。M1集成默认100连接，不以功能测试推断吞吐量。
-
-## 运行文件上传
-
-Ubuntu终端一（使用专用新目录，存在则自行确认用途和权限）：
-
-```bash
-mkdir -m 700 /tmp/chunkharbor-m2-data
-./build/chunkharbor-server --upload --root /tmp/chunkharbor-m2-data --port 8787
-```
-
-Ubuntu终端二：
-
-```bash
-cd /path/to/ChunkHarbor
-source_file=$(mktemp /tmp/chunkharbor-demo-XXXXXX)
-printf 'ChunkHarbor M2 upload\n' > "$source_file"
-./build/chunkharbor-cli upload --file "$source_file" --path examples/demo.txt --port 8787
-sha256sum "$source_file" /tmp/chunkharbor-m2-data/files/examples/demo.txt
-ctest --test-dir build -R 'upload_|application_pause' -V
-```
-
-预期 `UPLOAD OK`，两项摘要一致。目标已存在会拒绝覆盖；测试重跑应换逻辑路径。断连的未完成会话可通过查询恢复；Windows CLI 的会话保存和重启续传步骤见 [M3 验收](docs/M3_VALIDATION.md)。未完成会话在30天后于服务端启动时过期并清理暂存文件。
-
-## 运行 HELLO 握手
-
-Ubuntu终端一：`./build/chunkharbor-server --handshake --port 8787`。
-
-另一个Ubuntu终端：`./build/chunkharbor-cli hello --port 8787 --client-name chunkharbor-cli`。
-
-预期输出 `HELLO OK: version=1 server=chunkharbor-server capabilities=handshake ...`。握手仅协商版本和实际能力，**不代表认证或支持文件上传**。`--handshake` 与 `--echo` 互斥，完整字段、错误码与状态规则见 [握手契约](docs/HANDSHAKE.md)。握手测试可运行 `ctest --test-dir build -R handshake -V`。
-
-## 运行 Echo
-
-Ubuntu 终端一：
-
-```bash
-./build/chunkharbor-server --echo --port 8787
-```
-
-看到 `LISTENING 127.0.0.1:8787` 后，在另一个 Ubuntu 终端执行：
-
-```bash
-cd /path/to/ChunkHarbor
-./build/chunkharbor-cli echo --host 127.0.0.1 --port 8787 --message "hello ChunkHarbor"
-```
-
-期望：`ECHO OK: hello ChunkHarbor`。服务端 Ctrl+C 或 SIGTERM 正常关闭；支持 `--idle-timeout-ms 30000`、`--max-connections 512`。`--port 0` 由系统分配端口并打印，供自动测试使用。
-
-Echo 是独立测试模式：PING(16) 回 PONG(17)，DATA_CHUNK(5) 原样回显以测试大二进制帧；这些 payload 暂作不透明测试字节，不执行 JSON/文件块业务。其他合法但未实现的消息、非法头或超限长度会关闭连接；没有 HELLO/上传/认证语义。配置 JSON 仍只是样例，程序目前通过上述参数配置。
-
-服务端只绑定loopback；Windows可用 `ssh -N -L 18787:127.0.0.1:8787 miniob-ubuntu` 建立隧道，再使用Qt GUI连接18787进行HELLO检测（服务端选handshake或upload模式）。真实GUI备份须使用upload模式，操作见[Windows使用](docs/BUILD_WINDOWS.md)。普通文本客户端不能替代帧客户端；连接检测不代表备份任务已连接或成功。
-
-## 自己调试
-
-```bash
-ctest --test-dir build -R network_integration -V
-ctest --test-dir build -R '^buffer_test$' -V
-gdb --args ./build/chunkharbor-server --echo --port 8787
-```
-
-GDB 中可设 `break chunkharbor::TcpConnection::readReady`、`break chunkharbor::TcpConnection::writeReady`、`break chunkharbor::protocol::decode`，输入 `run` 后从另一终端运行 CLI。`bt` 看调用栈，`print *this` 看连接/缓冲状态，`next` 单步，`continue` 继续。测试二进制也可直接用 GDB 启动；连接默认有空闲超时，断点停留很久时可把 `--idle-timeout-ms` 调大。
-
-```bash
-cmake -S . -B build-asan -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_SANITIZERS=ON
-cmake --build build-asan -j 2
-ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-asan --output-on-failure
-```
-
-## Windows 共享协议测试
-
-使用兼容 C++17 的编译器和 Ninja（加入 PATH），无需 Qt。Windows 默认关闭 Linux server/CLI。Qt Windows CLI 的构建与使用见 [M3 验收](docs/M3_VALIDATION.md)。以下只构建纯C++协议与client_core；当前Qt GUI真实备份的构建及SSH连接方法见[Windows使用](docs/BUILD_WINDOWS.md)，M2_USAGE仅保留原型阶段历史：
-
-```powershell
-cmake -S . -B build-windows-protocol -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCHUNKHARBOR_BUILD_SERVER=OFF -DCHUNKHARBOR_BUILD_CLI=OFF -DCHUNKHARBOR_BUILD_GUI=OFF
-cmake --build build-windows-protocol
-ctest --test-dir build-windows-protocol --output-on-failure
-```
-
-本机MinGW13.2共享测试及Qt6.8.3匹配Kit连接原型均已运行；Windows Qt经SSH转发到Ubuntu的真实握手已通过。后续真实GUI上传验收见M5_VALIDATION.md；MSVC和正式分发打包未验证。
-
-## 实现边界
-
-已拆分 `chunkharbor_protocol`、最小 `chunkharbor_client_core`、`chunkharbor_linux_net`。网络采用单线程 LT；多线程 Reactor 为后续可选扩展。每连接输入上限 1 MiB+32，输出上限 4 MiB，高/低水位 1 MiB/512 KiB；积压暂停读，降水位恢复读；每次事件收发有预算，连接数与空闲期有上限。容量限额不包括内核 socket 内存及短暂编码/扩容副本。
-
-服务端目录快照可按逻辑前缀固定已提交版本集合，详见[R2.4目录快照](docs/R2_4_DIRECTORY_SNAPSHOT.md)。目录恢复及TLS/认证仍待后续阶段。Linux CLI和Windows GUI下载均不提供覆盖或下载续传；本轮未提供Linux Qt GUI安全输出后端，Linux使用CLI下载。服务端使用schema v4及不可变版本、固定基线和条件发布；文件系统与SQLite之间的发布窗口通过启动核验协调，不能视为跨存储原子事务。新库不能交给旧二进制；真实旧备份根升级前应先备份并审核。旧M2无数据库会话仍隔离。完整规格见[指南](CODEX_DEVELOPMENT_GUIDE.md)，当前结果见[进度](docs/PROGRESS.md)、[M4验证](docs/M4_VALIDATION.md)。
+构建和操作细节可参考 [Windows 构建说明](docs/BUILD_WINDOWS.md)、[连接说明](docs/R2_6_CONNECTIONS.md)及[协议说明](docs/PROTOCOL.md)。
